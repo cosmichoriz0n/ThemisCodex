@@ -1,0 +1,12 @@
+{
+  "name": "imis-simulators",
+  "version": "1.0.0",
+  "description": "MIMS, EBS2000, CAS2000 simulators for IMIS development",
+  "main": "gateway.js",
+  "scripts": {
+    "start": "node gateway.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}

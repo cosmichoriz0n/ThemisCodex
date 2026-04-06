@@ -1,0 +1,1870 @@
+INTEGRATED MANAGEMENT
+
+INFORMATION SYSTEM
+
+PROJECT MASTER DOCUMENT
+
+v4.1 - Updated: Railway Docker deployment (no Railway-hosted Docker container required)
+
+  -------------------------------------------------------------------------------------------------------------------------------------------------
+  Field                 Value
+  --------------------- ---------------------------------------------------------------------------------------------------------------------------
+  System name           Inventory Management Information System (IMIS)
+
+  Version               v4.0 - Consolidated - All previous documents merged
+
+  Client type           Philippine Electric Cooperative (NEA-member REC)
+
+  Platform              Browser-based web application - fully hosted on Railway (Docker containers) - no Railway-hosted Docker container required
+
+  Asset modules         13 categories - Line Materials through IT Equipment
+
+  Barcode               Core in-scope - Code128 + QR - USB scanner + mobile camera
+
+  Asset lifecycle       Acquisition to disposal - 6 lifecycle states
+
+  Integrations          MIMS (member sync) + EBS2000 (billing) + CAS2000 (NEA COA journals)
+
+  Stack                 Next.js 14 + Supabase + n8n + Railway (Docker) + Node.js 20 LTS
+
+  Security              TLS 1.3 in transit + AES-256 at rest + JWT + RBAC + RLS
+
+  Compliance            RA 9184 (Government Procurement) + RA 10173 (Data Privacy) + NEA USOA
+
+  Total sprints         12 sprints x 2 weeks = 24 weeks standard | 14-16 weeks with Claude Code
+
+  MVP milestone         End of Sprint 4 (Week 8)
+
+  Maintenance           12 months post go-live
+
+  Previous docs         Supersedes IMS v1.1, Deliverables v2.0, SOW v3.0, Claude Code Guide v1.0
+  -------------------------------------------------------------------------------------------------------------------------------------------------
+
+1. Executive Summary
+
+This document is the single authoritative reference for the IMIS engagement. It supersedes all previous versions (v1.1, v2.0, v3.0, Claude Code Guide v1.0) and consolidates the Statement of Work scope, technical architecture, 13 asset modules, sprint plan, integration design, Claude Code developer guide, legacy system simulators, compliance requirements, and 12-month maintenance plan into one document.
+
+The client is a Philippine electric cooperative operating under the National Electrification Administration (NEA). The asset categories in the SOW - including Line Materials, House Wiring Materials, and Utility Plant in Service (UPIS) - are specific to REC operations and require alignment with the NEA Uniform System of Accounts (USOA) for the CAS2000 accounting integration.
+
+1.1 SOW deliverables summary
+
+  ------------------- ------------------ ------------------- -------------- ----------------- ----------------
+  D1: IMIS Platform   D2: Integrations   D3: Documentation   D4: Training   D5: Maintenance   D6: Compliance
+
+  ------------------- ------------------ ------------------- -------------- ----------------- ----------------
+
+  ---------------------------------------------------------------------------------------------------------------------
+  #     Deliverable                                                                    Sprint      Due
+  ----- ------------------------------------------------------------------------------ ----------- --------------------
+  D1    Fully functional Windows-based IMIS platform with 13 asset modules + barcode   S1-S6       End Sprint 6
+
+  D2    Successful integration with MIMS, EBS2000, and CAS2000                         S5-S7       End Sprint 7
+
+  D3    User manuals, admin guide, integration runbook, DPIA, system security plan     S9-S11      End Sprint 11
+
+  D4    Training sessions for all user roles + train-the-trainer                       S12         End Sprint 12
+
+  D5    12-month post-deployment support and maintenance plan                          Post S12    12 months
+
+  D6    RA 9184 procurement compliance + RA 10173 data privacy compliance              S1,S11      Sprint 11 sign-off
+  ---------------------------------------------------------------------------------------------------------------------
+
+1.2 Platform definition - confirmed
+
+  Platform confirmed: fully browser-based, fully cloud-hosted on Railway using Docker containers. No Railway-hosted Docker container. No IIS, no on-premises server required. Client staff access IMIS by navigating to the Railway URL in any modern browser (Chrome, Firefox, Edge, Safari). Windows-based in the SOW means the client uses Windows computers - not that the server runs Windows.
+
+2. SOW Scope Analysis - Electric Cooperative Context
+
+The asset categories in the SOW identify this client as a NEA-member Rural Electric Cooperative (REC). This is not a generic inventory system - it must comply with NEA accounting standards, the Uniform System of Accounts (USOA), and REC-specific operational workflows.
+
+2.1 What the SOW adds beyond generic IMS
+
+  --------------------------------------------------------------------------------------------------------
+  Item               Generic IMS assumption   Actual SOW requirement                       Sprint impact
+  ------------------ ------------------------ -------------------------------------------- ---------------
+  Asset categories   1 generic module         13 specific modules with unique attributes   +4 sprints
+
+  Barcode            Phase 2 add-on           Core in-scope - Sprint 2                     Moved earlier
+
+  Asset lifecycle    Stock in/out only        Acquisition to disposal - 6 states           +2 sprints
+
+  UPIS module        Not in scope             NEA-specific - depreciation required         +1 sprint
+
+  NEA COA            Generic GAAP journals    NEA Uniform System of Accounts required      Changes S7
+
+  Motor Pool PMS     Not in scope             Mileage/calendar-based PMS scheduler         In S4
+
+  Medical expiry     Not in scope             90-day expiry alert for Medical Supplies     In S4
+
+  Timeline           8 sprints / 16 weeks     12 sprints / 24 weeks                        Updated
+  --------------------------------------------------------------------------------------------------------
+
+2.2 The 13 asset modules
+
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  #    Category                      Code   Key unique fields                                                 NEA account             Lifecycle type
+  ---- ----------------------------- ------ ----------------------------------------------------------------- ----------------------- --------------------
+  1    Line Materials                LM     Conductor type, gauge, length, voltage rating, lot no.            Account 154             Capital/consumable
+
+  2    Tools and Equipment           TE     Tool type, condition, assigned to, calibration due                Account 163             Reusable asset
+
+  3    Furniture and Fixtures        FF     Room/location, acquisition cost, condition                        Account 391             Fixed asset
+
+  4    Office Supplies               OS     Brand, pack size, unit, reorder level                             Operating expense       Consumable
+
+  5    Motor Pool Equip & Supplies   MP     Plate no., OR no., make, model, year, mileage, PMS schedule       Account 392             Vehicle asset
+
+  6    House Wiring Materials        HW     Wire type, gauge, length, insulation rating                       Account 154/Operating   Consumable
+
+  7    Special Equipment             SE     Serial no., calibration cert, calibration expiry                  Account 163             Calibrated asset
+
+  8    UPIS                          UPIS   NEA asset code, feeder, depreciation rate, net book value         Account 101-199         Capital asset
+
+  9    Medical Supplies & Equip      MS     Lot no., expiry date, storage temp, DOH class                     Operating expense       Expiry-tracked
+
+  10   Transportation Equipment      TR     Plate no., OR no., chassis no., engine no., insurance expiry      Account 392             Vehicle asset
+
+  11   Communication Equipment       CE     Serial no., NTC license no., NTC expiry                           Account 163             Licensed asset
+
+  12   Building Repair Materials     BM     Material type, unit, supplier, work order reference               Operating expense       Consumable
+
+  13   IT Equipment and Software     IT     Serial no., MAC, OS, license key, license expiry, assigned user   Account 391             IT asset
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+
+2.3 Asset lifecycle states - all 13 categories
+
+  --------------------------------------------------------------------------------------------------------------------------------------
+  State          Description                                         Who triggers          Records created
+  -------------- --------------------------------------------------- --------------------- ---------------------------------------------
+  Acquired       PO received, item entered, awaiting inspection      Receiving staff       Item record + acquisition log
+
+  In-stock       Passed inspection, stored in warehouse, available   Warehouse admin       Inspection record + stock-in movement
+
+  In-service     Issued to person, crew, location, or installed      Inventory manager     Issuance + member link from MIMS
+
+  Under repair   Returned for repair or PMS - temporarily offline    Supervisor            Repair/PMS record + return movement
+
+  Returned       Repaired, back to in-service or stockroom           Inventory manager     Return record + movement
+
+  Disposed       Written-off, condemned, sold, retired               Authorized approver   Disposal record + CAS2000 write-off journal
+  --------------------------------------------------------------------------------------------------------------------------------------
+
+3. System Architecture
+
+3.1 Technology stack
+
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  Layer               Technology                   Version    Railway/hosting
+  ------------------- ---------------------------- ---------- --------------------------------------------------------------------------------------------
+  Frontend / API      Next.js 14 (App Router)      14.x       Railway Docker container (imis-app service)
+
+  Mobile scanning     Next.js PWA + html5-qrcode   Latest     Same Vercel deployment
+
+  Database            Supabase PostgreSQL          Latest     Supabase cloud (managed)
+
+  Auth                Supabase Auth                Latest     Supabase cloud
+
+  Integration ETL     n8n self-hosted              Latest     Railway service: imis-n8n
+
+  Simulators (dev)    Node.js + Express            20 LTS     Railway service: imis-simulators
+
+  Container runtime   Docker (via Railway)         Latest     Railway manages Docker builds from Dockerfile or Nixpacks - no manual container management
+
+  Process manager     Railway restart policy       N/A        ON_FAILURE with max 3 retries - configured in railway.json per service
+
+  Barcode engine      bwip-js (server-side)        Latest     Next.js API route (Vercel)
+
+  Label printing      pdf-lib                      Latest     Next.js API route (Vercel)
+
+  Email alerts        Resend + Nodemailer          Latest     Vercel Edge Function
+
+  Report PDF          pdf-lib (server-side)        Latest     Next.js API route (Vercel)
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+
+3.2 Railway deployment topology
+
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Service            Railway name             Internal port   Public URL                        Purpose
+  ------------------ ------------------------ --------------- --------------------------------- -----------------------------------------------------------------------------------------------
+  n8n workflows      imis-n8n                 $PORT (5678)    https://imis-n8n.up.railway.app   All integration workflows: MIMS, EBS2000, CAS2000, alerts
+
+  Simulators (dev)   imis-simulators          $PORT (3000)    https://imis-sim.up.railway.app   MIMS + EBS2000 + CAS2000 mock APIs for development
+
+  IMIS web app       imis-app (Railway)                       https://imis-app.up.railway.app   Next.js 14 app in Docker container. All users access via browser. Zero client infrastructure.
+
+  PostgreSQL         Supabase (not Railway)   5432            Supabase connection string        All IMIS data + Auth + Storage + Realtime
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+  All services run as Docker containers on Railway. The client needs zero server infrastructure - only a browser. Railway handles TLS, routing, auto-restart, scaling, and rolling deploys. Vercel is used for preview deployments only (optional). Production runs entirely on Railway.
+
+3.3 Security architecture - all layers
+
+  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Layer             What                   How                                                                                                                                                                      Sprint
+  ----------------- ---------------------- ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ --------
+  In transit        TLS 1.3                Railway and Vercel enforce TLS 1.3 on all public endpoints. Never expose HTTP. Railway enforces HTTPS automatically on all services. No manual redirect config needed.   S1
+
+  At rest (DB)      AES-256                Supabase encrypts all PostgreSQL data at rest by default. Verify in Supabase project Settings > Infrastructure.                                                          S1
+
+  At rest (files)   AES-256                Supabase Storage encrypts all uploaded files (PDFs, CSVs) at rest. Use signed URLs (15-min expiry) for downloads.                                                        S6
+
+  Authentication    JWT (8-hour expiry)    Supabase Auth issues JWTs. All API routes verify Bearer token before processing. No anonymous route access.                                                              S1
+
+  Authorization     RLS on every table     Row-Level Security enabled on all 15 tables. Policies filter by role. Client can never bypass RLS.                                                                       S1
+
+  RBAC              5 roles via profiles   Role stored in profiles.role. get_user_role() function reads from JWT + DB. withAuth() enforces per-route.                                                               S1
+
+  Secrets           Railway env vars       All secrets in Railway environment variable groups. Never in code. Never in git. .env.local for dev only.                                                                S1
+
+  Input             Zod schemas            All API inputs validated with Zod before any DB operation. CSV injection prevention on all string fields.                                                                S2
+
+  Audit             Immutable logs         audit_log and integration_log have INSERT-only RLS. No UPDATE or DELETE ever permitted on these tables.                                                                  S1
+
+  CORS              Next.js config         Only Vercel production domain allowed as CORS origin. No wildcard.                                                                                                       S1
+  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+3.4 RBAC - complete permission matrix
+
+  ----------------------------------------------------------------------------
+  Permission                   Staff    Manager   Finance   Admin    Auditor
+  ---------------------------- -------- --------- --------- -------- ---------
+  View stock levels            YES      YES       YES       YES      YES
+
+  Create stock movements       YES      YES       NO        YES      NO
+
+  Approve adjustments          NO       YES       NO        YES      NO
+
+  Request asset disposal       NO       YES       NO        YES      NO
+
+  Authorize disposal           NO       NO        NO        YES      NO
+
+  View transactions            YES      YES       YES       YES      YES
+
+  Download reports             NO       YES       YES       YES      YES
+
+  Generate billing report      NO       NO        YES       YES      YES
+
+  Manage item catalog          NO       YES       NO        YES      NO
+
+  Bulk CSV import              NO       YES       NO        YES      NO
+
+  Manage users                 NO       NO        NO        YES      NO
+
+  View integration config      NO       NO        NO        YES      YES
+
+  Edit integration config      NO       NO        NO        YES      NO
+
+  View full audit log          NO       NO        NO        YES      YES
+
+  Trigger manual re-sync       NO       NO        NO        YES      NO
+
+  Trigger manual re-billing    NO       NO        NO        YES      NO
+
+  View UPIS depreciation       NO       YES       YES       YES      YES
+
+  Post UPIS depreciation       NO       NO        NO        YES      NO
+  ----------------------------------------------------------------------------
+
+3.5 Database schema - all 15 tables
+
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Table               Purpose                                           RLS type                                          Key columns
+  ------------------- ------------------------------------------------- ------------------------------------------------- -------------------------------------------------------------------
+  profiles            User accounts + RBAC roles                        Per-role read; admin write                        id (FK auth.users), role, full_name, is_active
+
+  category_codes      13 asset category reference data                  All roles read; admin write                       code, name, is_consumable, nea_account_code
+
+  items               Master item catalog for all 13 categories         All roles read; manager write                     item_id, category_code, item_name, barcode, sku, lifecycle_status
+
+  item_attributes     Category-specific fields (EAV pattern)            Same as items                                     item_id, attribute_name, attribute_value
+
+  inventory_stock     Current quantity per item per location            All roles read; movement engine write             item_id, location, qty_on_hand, qty_reserved
+
+  stock_movements     IMMUTABLE movement log                            All roles read; INSERT only - no update/delete    item_id, member_id, movement_type, quantity, moved_at
+
+  lifecycle_events    IMMUTABLE lifecycle state audit trail             All roles read; INSERT only                       item_id, from_state, to_state, authorized_by, event_at
+
+  transactions        Master billing/accounting transaction record      Finance + admin read; system write                member_id, ebs_billing_ref, cas_journal_ref, total_amount, status
+
+  transaction_items   Line items per transaction                        Finance + admin read                              transaction_id, item_id, qty, unit_price
+
+  pms_schedules       PMS schedules for Motor Pool and Transportation   Manager + admin                                   item_id, due_date, due_mileage, pms_type, last_done_at
+
+  disposal_records    Asset disposal authorization records              Manager + admin write; immutable after disposed   item_id, disposal_type, status, authorization_no
+
+  members             Cached MIMS member data                           All roles read; system write                      mims_member_id, full_name, membership_type, status
+
+  reorder_alerts      Low-stock and lifecycle alerts                    All roles read; manager resolve                   item_id, alert_type, status, triggered_at
+
+  integration_log     IMMUTABLE - all external API call audit trail     Finance/admin/auditor read; INSERT only           source_system, operation, status, payload, error_msg
+
+  audit_log           IMMUTABLE - all user action audit trail           Admin/auditor read; INSERT only                   user_id, action, resource, details, created_at
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+4. Barcode-Based Inventory Tracking
+
+4.1 Barcode architecture
+
+  ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Component          Technology                                         Details
+  ------------------ -------------------------------------------------- --------------------------------------------------------------------------------------------------
+  Barcode format     Code128 + QR (both per item)                       Code128 for USB scanner speed. QR for mobile camera. Both generated on item creation.
+
+  Generation         bwip-js (server-side Node.js)                      Runs in Next.js API route. Never client-side. Returns PNG buffer.
+
+  Label printing     pdf-lib (server-side)                              A4 sheet (multiple labels) or 58mm thermal label. Browser print dialog.
+
+  USB scanner        HID keyboard emulation                             Plug-and-play. No driver needed. Scanner input detected as fast keystroke burst ending in Enter.
+
+  Mobile scanning    html5-qrcode (browser camera)                      Works on Android Chrome and iOS Safari. No app install needed. PWA page.
+
+  Asset tag format   {CODE}-{YYYY}-{SEQUENCE}                           Example: LM-2026-001234 | MP-2026-000089 | UPIS-2026-000001
+
+  Label contents     Asset tag, name, category, location, Code128, QR   QR links to IMIS item record URL for instant lookup
+  ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+4.2 Barcode scanning workflows
+
+-   Receiving (stock-in): scan barcode on supplier delivery note - system pre-fills item fields - inspector confirms quantity and condition
+
+-   Issuance: scan requester ID card + item barcode - system does MIMS member lookup - creates issuance record with member link
+
+-   Physical count/audit: scan all items in a location - system compares to expected on-hand - flags discrepancies in variance report
+
+-   Return: scan item barcode - system retrieves original issuance record - one-click return transaction
+
+-   Disposal: scan item barcode - system shows item details + disposal form - approver digitally signs off
+
+5. Integration Design - MIMS, EBS2000, CAS2000
+
+5.1 Integration summary
+
+  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  System    Direction           Method                     Frequency                     Key data                          NEA note
+  --------- ------------------- -------------------------- ----------------------------- --------------------------------- ---------------------------------------------------------
+  MIMS      Pull (IMS reads)    REST API or DB query       Every 15 min delta            member ID, name, type, status     Links issuance to MIMS service request number
+
+  EBS2000   Push (IMS writes)   REST POST or CSV export    Event-driven on stock-out     member, items, qty, price, date   Must use cooperative-specific billing code format
+
+  CAS2000   Push (IMS writes)   REST POST or file import   Event-driven on transaction   NEA COA journal entries           Account codes MUST match NEA Uniform System of Accounts
+  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+5.2 CAS2000 - NEA Chart of Accounts journal mapping
+
+  -------------------------------------------------------------------------------------------------------------------------------------------------------
+  Journal type           Trigger                         Debit account                       Credit account                  Amount
+  ---------------------- ------------------------------- ----------------------------------- ------------------------------- ----------------------------
+  COGS                   Stock-out (issuance)            5110 Cost of Goods Sold             1540 Materials and Supplies     Transaction total amount
+
+  Adjustment             Manual stock adjustment         5120 Inventory Adjustment Expense   1540 Materials and Supplies     Adjustment value
+
+  Disposal write-off     Asset disposed                  5130 Loss on Disposal               1920 Utility Plant in Service   Asset net book value
+
+  UPIS depreciation      Annual (Jan 1 n8n workflow)     5310 Depreciation Expense - UPIS    1990 Accumulated Depreciation   Annual depreciation amount
+
+  Stock-in (receiving)   Receiving goods from supplier   1540 Materials and Supplies         2110 Accounts Payable           PO total amount
+
+  Journal reversal       Void or error correction        Original credit account             Original debit account          Same amount (reversed)
+  -------------------------------------------------------------------------------------------------------------------------------------------------------
+
+  Confirm exact NEA COA account codes with the cooperative Finance Officer before Sprint 7. The codes above are based on NEA USOA standards but individual cooperatives may have sub-accounts.
+
+5.3 n8n workflow inventory - all 6 workflows
+
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Workflow ID              Name                      Trigger                             System                               Security
+  ------------------------ ------------------------- ----------------------------------- ------------------------------------ ---------------------------------------------------------------------
+  IMIS-MIMS-001            Member delta sync         Cron: every 15 min                  MIMS API -> Supabase members table   API key in Railway env var. Logs to integration_log.
+
+  IMIS-EBS-001             Billing record creation   Webhook from IMIS (HMAC-verified)   IMIS -> EBS2000 API                  HMAC-SHA256 signature verification. 3-retry with 10/30/90s backoff.
+
+  IMIS-CAS-001             COGS journal posting      Webhook from IMIS (HMAC-verified)   IMIS -> CAS2000 API                  Balance validation before posting. NEA COA mapping.
+
+  IMIS-CAS-RECONCILE       Nightly reconciliation    Cron: 23:00 PHT daily               IMIS DB vs CAS2000 totals            Variance alert email to finance_officer if mismatch > 0.
+
+  IMIS-ALERT-DAILY         PMS + expiry alerts       Cron: 07:00 PHT daily               Supabase DB (read only)              service_role key never logged.
+
+  IMIS-UPIS-DEPRECIATION   Annual depreciation       Cron: Jan 1 00:01 PHT               Supabase DB + CAS2000                Dry-run mode available. Manual trigger for testing.
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+6. Sprint Plan - 12 Sprints x 2 Weeks
+
+  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Sprint   Weeks   Primary deliverable   Key outputs                                                                                                 Milestone
+  -------- ------- --------------------- ----------------------------------------------------------------------------------------------------------- -------------------------
+  S1       1-2     D1 + D6               Project scaffold, all 15 DB tables + RLS + RBAC, withAuth(), Railway n8n, admin shell, PhilGEPS check       Dev environment live
+
+  S2       3-4     D1                    Barcode engine (Code128+QR), label print, USB+mobile scan, 13-category item catalog + Zod validation        Barcode demo ready
+
+  S3       5-6     D1                    Stock movements (all types), lifecycle state machine, atomic RPC, movement history                          Core inventory working
+
+  S4       7-8     D1                    PMS scheduler, expiry alerts, license/cert alerts, reorder alerts, admin dashboard, MVP demo package        MVP demo milestone
+
+  S5       9-10    D2                    MIMS Workflow A (delta sync), member lookup in issuance, member transaction history, integration health     MIMS live
+
+  S6       11-12   D2                    EBS2000 Workflow B (HMAC webhook, retry, flat-file fallback), billing status UI, manual re-trigger          EBS2000 live
+
+  S7       13-14   D2                    CAS2000 Workflow C (NEA COA journals), Workflow D (nightly reconciliation), UPIS depreciation workflow      All integrations live
+
+  S8       15-16   D1                    Multi-step disposal workflow, UPIS module completion, Motor Pool PMS full build, write-off to CAS2000       Full lifecycle complete
+
+  S9       17-18   D1                    12 reports (CSV+PDF), signed URL downloads, executive dashboard charts, CSV injection prevention            Feature complete
+
+  S10      19-20   D1                    Bulk CSV import + validation, DB indexes, k6 load test (50 users), OWASP ZAP scan + remediation             Production-hardened
+
+  S11      21-22   D3+D6                 UAT, bug fixes, data migration, all user manuals, admin guide, runbook, DPIA, security plan, UAT sign-off   UAT signed off
+
+  S12      23-24   D1+D4                 Railway Docker prod deploy, secrets rotation, 5-day parallel run, training (5 sessions), go-live            System live
+  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
++------------+------------------------------------------------------------------------------------------------------+
+| Sprint 1   | Goal: Full project foundation - all DB tables, RLS, RBAC, auth middleware, Railway n8n, admin shell. |
+|            |                                                                                                      |
+| Weeks 1-2  |                                                                                                      |
++------------+------------------------------------------------------------------------------------------------------+
+
+Sprint 1 key tasks
+
+-   Next.js 14 scaffold: App Router, TypeScript strict, TailwindCSS, ESLint, folder structure (/lib/auth, /lib/validation, /lib/barcode, /lib/inventory)
+
+-   Supabase: all 15 tables in one migration file with RLS enabled on every table immediately after CREATE TABLE
+
+-   get_user_role() function, withAuth() middleware, 5-role profiles.role CHECK constraint
+
+-   RLS policies: per-role SELECT/INSERT/UPDATE. audit_log and integration_log: INSERT only, no update/delete
+
+-   Railway: deploy n8n with N8N_ENCRYPTION_KEY (32-char random hex), basic auth enabled, health check at /healthz
+
+-   railway.json in project root with restart policy ON_FAILURE, max 3 retries
+
+-   Admin shell: role-aware sidebar with 13 module links, breadcrumb, header with user identity and role badge
+
+-   next.config.ts: CSP headers, X-Frame-Options, CORS restricted to production Vercel domain only
+
+-   .env.local.example: all variable names documented with no values
+
+Sprint 1 acceptance checklist
+
+  ----- ------------------------------------------------------------------------------------------------------------------------------------
+  [ ]   All 15 tables exist - verify with: SELECT tablename FROM pg_tables WHERE schemaname='public'
+
+  [ ]   RLS enabled on all tables - zero rows returned by: SELECT tablename FROM pg_tables WHERE schemaname='public' AND rowsecurity=false
+
+  [ ]   audit_log has no UPDATE or DELETE RLS policies (INSERT only)
+
+  [ ]   withAuth() returns 401 on missing Authorization header (curl test)
+
+  [ ]   withAuth() returns 403 on wrong role (test with inventory_staff token on admin route)
+
+  [ ]   n8n accessible at Railway URL with basic auth prompt - GET /healthz returns 200
+
+  [ ]   No secrets in git - run: git log --all -p | grep -iE "(key|secret|password|token)" shows no actual values
+
+  [ ]   npm run build passes with zero errors
+
+  [ ]   CSP headers present - curl -I https://staging-url | grep -i content-security
+  ----- ------------------------------------------------------------------------------------------------------------------------------------
+
++------------+---------------------------------------------------------------------------------------+
+| Sprint 2   | Goal: Barcode engine, 13-category item catalog with category-specific Zod validation. |
+|            |                                                                                       |
+| Weeks 3-4  |                                                                                       |
++------------+---------------------------------------------------------------------------------------+
+
+Sprint 2 key tasks
+
+-   bwip-js: Code128 and QR barcode generation in API route /api/items/[id]/barcode
+
+-   pdf-lib: label PDF generator - A4 sheet (multiple labels) and 58mm thermal format
+
+-   ScannerInput.tsx: detects barcode scanner vs manual typing (8+ chars in 100ms = scanner), auto-submit on scan
+
+-   MobileScan.tsx: html5-qrcode camera scan, permission request, fallback to manual entry
+
+-   13 Zod schemas - one per category code - all share base schema, extend with category-specific required fields
+
+-   CSV injection prevention in all schemas: reject strings starting with =, +, -, @
+
+-   Item catalog: create/edit/deactivate pages, category-specific form fields rendered dynamically by category_code
+
+-   Item detail page: shows barcode image, QR, label print button, attribute display, lifecycle timeline
+
+Sprint 2 acceptance checklist
+
+  ----- -------------------------------------------------------------------------------------------------
+  [ ]   Creating an item auto-generates unique Code128 barcode and QR code
+
+  [ ]   Label PDF prints correctly on both A4 and 58mm thermal label paper
+
+  [ ]   USB scanner input triggers auto-submit without manual Enter key press
+
+  [ ]   Mobile camera scan identifies Code128 and QR correctly on 3 test items
+
+  [ ]   Motor Pool form shows plate_no, or_no, make, model, year, mileage as required fields
+
+  [ ]   Medical Supplies form shows lot_no, expiry_date, batch_no as required fields
+
+  [ ]   UPIS form shows nea_asset_code, depreciation_rate, installation_date, feeder as required fields
+
+  [ ]   Zod rejects items with cell values starting with = (CSV injection test)
+
+  [ ]   inventory_staff cannot access the item edit page (403 response)
+  ----- -------------------------------------------------------------------------------------------------
+
++------------+--------------------------------------------------------------------------+
+| Sprint 3   | Goal: Stock movements, lifecycle state machine, atomic RPC, audit trail. |
+|            |                                                                          |
+| Weeks 5-6  |                                                                          |
++------------+--------------------------------------------------------------------------+
+
+Sprint 3 key tasks
+
+-   Supabase RPC function process_stock_movement(): atomic quantity update + lifecycle state change in one transaction - no race conditions
+
+-   Movement types: receive, issue, return, adjust, transfer, dispose - each with role-based permission check in code (on top of RLS)
+
+-   Over-issuance guard: reject if qty > qty_on_hand. Manager override: { manager_override: true, override_reason: string } - logs warning to audit_log
+
+-   Lifecycle state machine: enforce valid transitions. Every state change writes to lifecycle_events (immutable)
+
+-   Post-movement triggers: update inventory_stock, check reorder_level, create reorder_alert if triggered, emit webhook to n8n if movement_type=issue
+
+-   Stock movement history page: per-item timeline, filterable by movement type and date range
+
+-   Physical count page: scan items in a location, compare to system on-hand, generate variance report
+
++------------+-------------------------------------------------------------------------------------+
+| Sprint 4   | Goal: PMS scheduler, expiry alerts, license alerts, admin dashboard. MVP milestone. |
+|            |                                                                                     |
+| Weeks 7-8  |                                                                                     |
++------------+-------------------------------------------------------------------------------------+
+
+Sprint 4 key tasks
+
+-   n8n IMIS-ALERT-DAILY workflow: runs at 07:00 PHT - checks PMS (14-day window), Medical expiry (90-day), IT/NTC/calibration expiry (30-day)
+
+-   Alert types: low_stock, pms_due, expiry_warning, license_expiry, calibration_due - all stored in reorder_alerts table
+
+-   Email notifications via Resend: inventory_manager for PMS and expiry alerts, system_admin for integration failures
+
+-   Admin dashboard: stock summary cards per category, active alert count by type, recent movement timeline, integration health badges (last sync time per system)
+
+-   MVP demo package: seed script for all 13 categories with 5-10 realistic items each, demo walkthrough script
+
+-   Staging environment: full stack running on Vercel staging + Railway + Supabase with seeded demo data
+
+Sprint 4 MVP acceptance checklist
+
+  ----- --------------------------------------------------------------------------------
+  [ ]   PMS alert created for Motor Pool vehicle with due_date within 14 days
+
+  [ ]   Expiry alert created for Medical item with expiry_date 89 days from now
+
+  [ ]   IT license alert created for IT equipment with license_expiry 29 days from now
+
+  [ ]   Admin dashboard stock totals match direct Supabase query results
+
+  [ ]   Reorder alert fires within 5 seconds of stock dropping to reorder_level
+
+  [ ]   Email notification received within 5 minutes of deliberate alert trigger
+
+  [ ]   Full MVP demo runs end-to-end on staging for all 13 categories without errors
+  ----- --------------------------------------------------------------------------------
+
++------------+-----------------------------------------------------------------------------+
+| Sprint 5   | Goal: MIMS integration: delta sync, member lookup, service request linking. |
+|            |                                                                             |
+| Weeks 9-10 |                                                                             |
++------------+-----------------------------------------------------------------------------+
+
+Sprint 5 key tasks
+
+-   n8n IMIS-MIMS-001: Cron every 15 min. Reads last synced_at from members table. GET MIMS /api/members?since={last_sync}. Upsert to members on mims_member_id conflict. Write to integration_log.
+
+-   Error handler: write integration_log entry with status=error + error_msg. Email to system_admin. API key never logged.
+
+-   Nightly full refresh: separate n8n workflow at 23:30 PHT as safety net (fetches all members regardless of updated_at)
+
+-   Issuance form: member typeahead search against local members table (not live MIMS call). Link to MIMS service request number.
+
+-   Member transaction history page: all items issued to a specific member, grouped by category, with date range filter
+
+-   Integration health dashboard widget: last successful sync timestamp, last error message, sync success rate (7-day)
+
++-------------+-----------------------------------------------------------------------------+
+| Sprint 6    | Goal: EBS2000 billing integration with HMAC, retry, and flat-file fallback. |
+|             |                                                                             |
+| Weeks 11-12 |                                                                             |
++-------------+-----------------------------------------------------------------------------+
+
+Sprint 6 key tasks
+
+-   IMIS internal webhook: /api/webhooks/transaction-created - fires after successful stock-out. Signs payload with HMAC-SHA256 using N8N_WEBHOOK_SECRET.
+
+-   n8n IMIS-EBS-001: verify HMAC signature (reject + log security_violation if mismatch). Validate payload with JSON Schema. POST to EBS2000. Store billing_ref.
+
+-   Retry: HTTP 5xx = retry 3 times (10s, 30s, 90s exponential backoff). HTTP 4xx = no retry (client error). After 3 failures: flag transaction as pending_billing.
+
+-   Flat-file CSV adapter: generates EBS2000-compatible import CSV when REST is unavailable. Written to Supabase Storage. Admin downloads and imports manually.
+
+-   Billing status column in transactions list: shows ebs_sync_status badge (synced / pending / failed) + billing_ref when available.
+
+-   Manual re-trigger: admin UI button on pending/failed transactions. Replays the webhook to n8n. Logs attempt to audit_log.
+
++-------------+----------------------------------------------------------------------------+
+| Sprint 7    | Goal: CAS2000 NEA COA journals, UPIS depreciation, nightly reconciliation. |
+|             |                                                                            |
+| Weeks 13-14 |                                                                            |
++-------------+----------------------------------------------------------------------------+
+
+Sprint 7 key tasks
+
+-   n8n IMIS-CAS-001: triggered by IMIS webhook (same HMAC pattern as EBS2000). Determines journal type from movement_type. Builds NEA COA-mapped entries. Balance validation (debit must equal credit). POST to CAS2000. Store cas_journal_ref.
+
+-   CAS2000 flat-file fallback: CSV/XML generator matching CAS2000 import format when REST unavailable.
+
+-   n8n IMIS-UPIS-DEPRECIATION: Cron Jan 1 00:01 PHT. Fetches all active UPIS assets. Calculates annual_depreciation = acquisition_cost x (depreciation_rate / 100). Updates accumulated_depreciation. Posts journal: Dr 5310 / Cr 1990.
+
+-   n8n IMIS-CAS-RECONCILE: Cron 23:00 PHT daily. Compares SUM(IMIS transaction amounts) vs SUM(CAS2000 journal debits) for the day. Writes result to reconciliation_results. Emails finance_officer if variance > 0.
+
+-   Reconciliation dashboard page: shows matched / unmatched / pending counts per day with drill-down.
+
++-------------+--------------------------------------------------------------------+
+| Sprint 8    | Goal: Multi-step disposal, UPIS module, Motor Pool PMS full build. |
+|             |                                                                    |
+| Weeks 15-16 |                                                                    |
++-------------+--------------------------------------------------------------------+
+
+Sprint 8 key tasks
+
+-   Disposal workflow: 4-step state machine (requested -> under_inspection -> authorized -> disposed). Each step writes to audit_log. Authorization step: system_admin RLS gate. Disposed items: RLS blocks all further writes.
+
+-   Disposal types: condemned, scrap sale, donated, transferred. Each posts a different CAS2000 write-off journal entry.
+
+-   UPIS module: full depreciation schedule view per asset, net book value calculator, per-feeder asset summary, annual depreciation history.
+
+-   Motor Pool PMS: full maintenance history per vehicle, mileage tracker (manual entry or OBD integration stub), PMS work order generation, PMS completion sign-off.
+
+-   Transportation: LTO registration renewal alert (60 days), insurance expiry alert (60 days), emission test due alert.
+
++-------------+---------------------------------------------------------------------------+
+| Sprint 9    | Goal: All 12 reports, secure downloads, charts, CSV injection prevention. |
+|             |                                                                           |
+| Weeks 17-18 |                                                                           |
++-------------+---------------------------------------------------------------------------+
+
+Sprint 9 - 12 reports delivered
+
+-   Report 01: Current stock - all items by category, on-hand, reserved, reorder status, lifecycle state
+
+-   Report 02: Stock movement history - filterable by category, item, member, date range, movement type
+
+-   Report 03: Asset lifecycle status - all items by lifecycle state with days-in-state aging
+
+-   Report 04: Consumption by member - items issued per member, total value, period comparison
+
+-   Report 05: UPIS depreciation schedule - acquisition cost, depreciation rate, accumulated, NBV per asset
+
+-   Report 06: Motor Pool PMS due - vehicles due in next 30/60/90 days with last PMS date
+
+-   Report 07: Expiry tracking - Medical Supplies, IT licenses, NTC licenses, calibrations by expiry date
+
+-   Report 08: Inventory valuation - quantity x unit cost per item and category, total portfolio PHP value
+
+-   Report 09: Billing reconciliation - IMIS transactions vs EBS2000 billing records side by side
+
+-   Report 10: Accounting reconciliation - IMIS totals vs CAS2000 journal entries with variance
+
+-   Report 11: Physical count variance - scanner count vs system on-hand per location
+
+-   Report 12: Disposal summary - items disposed by type and category, total value written off
+
+-   Security: CSV exports sanitize all cells (no =,+,-,@ injection). PDF reports stored in private Supabase Storage bucket. Downloads via signed URL with 15-min expiry. Every download logged to audit_log.
+
++-------------+---------------------------------------------------------------------+
+| Sprint 10   | Goal: Bulk import, DB indexes, k6 load test, OWASP scan, hardening. |
+|             |                                                                     |
+| Weeks 19-20 |                                                                     |
++-------------+---------------------------------------------------------------------+
+
+Sprint 10 key tasks
+
+-   Bulk CSV import: /api/import - accepts multipart/form-data, 10MB limit, CSV only. Parse with papaparse. Same Zod validation as manual entry (no bypass). Preview 20 rows before commit. Transactional bulk insert (rollback on any failure). Logs summary to audit_log.
+
+-   DB indexes: items(category_code), items(barcode), stock_movements(item_id, moved_at DESC), stock_movements(member_id), transactions(member_id), transactions(ebs_sync_status), integration_log(source_system, logged_at DESC), item_attributes(item_id, attribute_name)
+
+-   k6 load test: 50 virtual users, 120 seconds, target p95 < 2000ms on all main dashboard and item list pages
+
+-   OWASP ZAP baseline scan on staging URL. Fix all HIGH severity findings before Sprint 11. Attach scan report to project documentation.
+
+-   npm audit --audit-level=high. Zero high or critical vulnerabilities before go-live.
+
++-------------+------------------------------------------------------------------+
+| Sprint 11   | Goal: UAT, all documentation, DPIA, security plan, UAT sign-off. |
+|             |                                                                  |
+| Weeks 21-22 |                                                                  |
++-------------+------------------------------------------------------------------+
+
+Sprint 11 key tasks
+
+-   UAT: structured sessions with inventory staff (3 hours), managers (4 hours), finance officers (2 hours), IT admin (6 hours)
+
+-   Bug triage: all critical and high-severity UAT findings fixed before Sprint 12. Medium and low go to backlog.
+
+-   Data migration: import existing client inventory from spreadsheets via bulk import. Pilot with 20% of data in Sprint 10, full migration Sprint 11.
+
+-   Documentation set: Inventory Staff manual, Inventory Manager manual, Finance Officer manual, System Admin guide, Integration runbook, n8n workflow docs, Database schema reference, Railway and Docker deployment guide
+
+-   DPIA: co-author with client DPO. Data flows, personal data categories (member name, account no., consumption), legal basis, retention periods, breach notification procedure.
+
+-   System security plan: RLS verification evidence, OWASP scan report, penetration test results, access control matrix.
+
+-   UAT sign-off document: signed by sponsor, finance officer, inventory manager, IT admin.
+
++-------------+-------------------------------------------------------------------------------------+
+| Sprint 12   | Goal: Railway Docker prod deploy, 5-day parallel run, 5 training sessions, go-live. |
+|             |                                                                                     |
+| Weeks 23-24 |                                                                                     |
++-------------+-------------------------------------------------------------------------------------+
+
+Sprint 12 key tasks
+
+-   Railway Docker production: build and push all Docker images, deploy imis-app, imis-n8n, imis-simulators via railway up. Railway auto-provisions TLS and domains. No server admin needed. CLI: railway up --detach
+
+-   Railway production: separate Railway project (not dev). Rotate all secrets - new Supabase service_role key, new N8N_ENCRYPTION_KEY, new N8N_BASIC_AUTH_PASSWORD. Set NODE_ENV=production.
+
+-   Supabase production: enable Point-in-Time Recovery, 30-day backup retention, email alerts for high resource usage.
+
+-   5-day parallel run: IMIS runs alongside existing tracking process. Compare totals daily. Sign-off on Day 5 confirms zero variance.
+
+-   Training Session 1: Inventory Staff (3 hours, hands-on with training environment)
+
+-   Training Session 2: Inventory Manager (4 hours, hands-on)
+
+-   Training Session 3: Finance Officer (2 hours, reports and reconciliation focus)
+
+-   Training Session 4: System Administrator (6 hours, IIS, Railway, Supabase, n8n dashboard)
+
+-   Training Session 5: Train-the-Trainer (4 hours, designated power users)
+
+-   Handover: user manuals PDF, admin guide PDF, quick reference cards (laminated A4, one per role), video walkthroughs on shared drive
+
+-   Formal go-live: Inspection and Acceptance Report (IAR) signed by authorized client representative
+
+7. Claude Code Developer Guide
+
+7.1 How to use Claude Code on this project
+
+-   Paste the project context block (Section 7.2) at the start of every Claude Code session. Claude Code has no memory between sessions.
+
+-   One task at a time. Paste one task prompt, review the output, run tests, then paste the next.
+
+-   Never skip the sprint security checklist. RBAC and encryption are built in from Sprint 1, not added later.
+
+-   Run railway up after every sprint to confirm Railway deployment before starting the next sprint.
+
+-   Review all integration code against actual vendor API specs before deploying. Claude Code does not know EBS2000 or CAS2000 specs.
+
+-   Never commit .env files. Use Railway environment variables for all secrets in production.
+
+7.2 Project context block - paste at start of every Claude Code session
+
+  -----------------------------------------------------------------------------------------------
+  CLAUDE CODE PROMPT
+
+  You are building an IMIS for a Philippine electric cooperative (NEA-member REC).
+
+  Government contract (RA 9184). Data privacy (RA 10173).
+
+  Stack: Next.js 14 App Router (Vercel) + Supabase PostgreSQL + n8n on Railway + Node.js 20 LTS
+
+  Security (non-negotiable):
+
+  - In transit: TLS 1.3 (Railway + Vercel enforce automatically)
+
+  - At rest: AES-256 (Supabase default)
+
+  - Auth: Supabase Auth, JWT, 8-hour expiry
+
+  - Authorization: RLS on EVERY table. No exceptions.
+
+  - RBAC: inventory_staff | inventory_manager | finance_officer | system_admin | auditor
+
+  - All secrets via Railway environment variables. Never in code.
+
+  - Every API route wrapped with withAuth() middleware.
+
+  - audit_log and integration_log: INSERT only. No update or delete.
+
+  13 asset categories: LM (Line Materials), TE (Tools), FF (Furniture), OS (Office Supplies),
+
+  MP (Motor Pool), HW (House Wiring), SE (Special Equipment), UPIS (Utility Plant in Service),
+
+  MS (Medical Supplies), TR (Transportation), CE (Communication), BM (Building Materials), IT
+
+  Integrations: MIMS (member sync via n8n Workflow A)
+
+  EBS2000 (billing via n8n Workflow B - HMAC webhook)
+
+  CAS2000 (NEA COA journals via n8n Workflow C - HMAC webhook)
+
+  Railway services: imis-n8n (n8n), imis-simulators (dev mocks)
+
+  All Railway services listen on process.env.PORT. Health check at /health or /healthz.
+
+  Current sprint: [PASTE SPRINT NUMBER]
+
+  Current task: [PASTE TASK NAME]
+  -----------------------------------------------------------------------------------------------
+
+7.3 Epics and task prompts
+
++----------+---------------------------------------------+--------------+
+| E1       | Foundation: Security, Schema, RBAC, Railway | Sprint 1     |
+|          |                                             |              |
+| EPIC     |                                             |              |
++----------+---------------------------------------------+--------------+
+
+E1-T1: Project scaffold
+
+  -----------------------------------------------------------------------------------------
+  CLAUDE CODE PROMPT
+
+  Create a Next.js 14 App Router project with TypeScript strict mode and TailwindCSS.
+
+  Folder structure: /app/api, /components, /lib/auth, /lib/validation, /lib/barcode,
+
+  /lib/inventory, /types. Create railway.json with ON_FAILURE restart policy.
+
+  Create .env.local.example with all variable names. Add next.config.ts with CSP headers
+
+  and X-Frame-Options. Create two Supabase client files: lib/supabase/client.ts (browser)
+
+  and lib/supabase/server.ts (server with service_role). Ensure service_role is never
+
+  imported in any client component.
+  -----------------------------------------------------------------------------------------
+
+E1-T2: Full database schema - all 15 tables
+
+  ------------------------------------------------------------------------------------------
+  CLAUDE CODE PROMPT
+
+  Generate the complete SQL migration for IMIS: supabase/migrations/001_initial_schema.sql
+
+  Tables: profiles, category_codes, items, item_attributes, inventory_stock,
+
+  stock_movements, lifecycle_events, transactions, transaction_items, pms_schedules,
+
+  disposal_records, members, reorder_alerts, integration_log, audit_log
+
+  Rules for every table:
+
+  - UUID primary key with gen_random_uuid() default
+
+  - created_at and updated_at TIMESTAMPTZ with timezone
+
+  - created_by UUID FK to auth.users
+
+  - ALTER TABLE x ENABLE ROW LEVEL SECURITY immediately after CREATE TABLE
+
+  Special: stock_movements, lifecycle_events, integration_log, audit_log are APPEND-ONLY.
+
+  No UPDATE or DELETE RLS policies on these tables. Ever.
+
+  profiles.role: CHECK constraint for 5 valid roles only.
+
+  Seed all 13 category codes after creating category_codes table.
+  ------------------------------------------------------------------------------------------
+
+E1-T3: RLS policies and withAuth middleware
+
+  -------------------------------------------------------------------------------
+  CLAUDE CODE PROMPT
+
+  Write RLS policies for all 15 tables using this role helper:
+
+  CREATE OR REPLACE FUNCTION get_user_role()
+
+  RETURNS TEXT AS $$
+
+  SELECT COALESCE(auth.jwt() ->> 'role',
+
+  (SELECT role FROM public.profiles WHERE id = auth.uid()))
+
+  $$ LANGUAGE sql SECURITY DEFINER STABLE;
+
+  Then create lib/auth/withAuth.ts - a wrapper for all Next.js API routes that:
+
+  1. Extracts Bearer token from Authorization header
+
+  2. Validates with Supabase server client
+
+  3. Returns 401 if missing or invalid
+
+  4. Fetches role from profiles table (not JWT claim alone)
+
+  5. Returns 403 if role not in allowedRoles[]
+
+  6. Writes every API access attempt to audit_log
+
+  7. Passes (req, { user, role }) to the wrapped handler
+  -------------------------------------------------------------------------------
+
+E1-T4: Railway n8n deployment
+
+  --------------------------------------------------------------------------
+  CLAUDE CODE PROMPT
+
+  Configure n8n for Railway deployment.
+
+  Create services/n8n/railway.json with healthcheckPath: /healthz
+
+  Document these Railway environment variables to set via dashboard:
+
+  N8N_ENCRYPTION_KEY: generate with:
+
+  node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+
+  N8N_BASIC_AUTH_ACTIVE: true
+
+  N8N_BASIC_AUTH_USER: imis_admin
+
+  N8N_BASIC_AUTH_PASSWORD: (strong random password)
+
+  N8N_HOST: 0.0.0.0
+
+  N8N_PORT: $PORT
+
+  N8N_PROTOCOL: https
+
+  WEBHOOK_URL: https://[railway-n8n-domain]/webhook
+
+  Generate the gateway.js file for the simulators service that routes
+
+  /mims, /ebs2000, /cas2000 to separate Express apps on a single $PORT.
+  --------------------------------------------------------------------------
+
++----------+--------------------------------------------+--------------+
+| E2       | Barcode System and 13-Module Item Catalog  | Sprint 2     |
+|          |                                            |              |
+| EPIC     |                                            |              |
++----------+--------------------------------------------+--------------+
+
+E2-T1: Barcode generation and label printing
+
+  ------------------------------------------------------------------------
+  CLAUDE CODE PROMPT
+
+  Install bwip-js and pdf-lib. Create:
+
+  lib/barcode/generate.ts:
+
+  - generateCode128(value): Promise<Buffer> using bwip-js
+
+  - generateQR(value): Promise<Buffer> using bwip-js
+
+  - generateAssetTag(category_code, year, sequence): string
+
+  format: {CODE}-{YYYY}-{SEQUENCE padded to 6 digits}
+
+  app/api/items/[id]/barcode/route.ts:
+
+  - GET: returns Code128 PNG. withAuth(all roles).
+
+  - Cache-Control: public max-age=86400
+
+  app/api/items/[id]/label/route.ts:
+
+  - GET: returns PDF label. Query param: format=a4|thermal_58mm
+
+  - A4: 8 labels per page in grid layout
+
+  - 58mm thermal: single label with barcode + QR + name + SKU + location
+
+  - withAuth(all roles)
+  ------------------------------------------------------------------------
+
+E2-T2: 13-category Zod schemas
+
+  -------------------------------------------------------------------------------------
+  CLAUDE CODE PROMPT
+
+  Create lib/validation/items.ts with Zod schemas for all 13 category codes.
+
+  Base schema (all categories):
+
+  item_name: string min 3, max 200
+
+  category_code: enum of 13 codes
+
+  unit_of_measure: string
+
+  unit_cost: number positive
+
+  location: string min 2
+
+  supplier: string min 2
+
+  purchase_order_no: string min 3
+
+  acquired_date: date string YYYY-MM-DD
+
+  Category-specific required fields:
+
+  MP + TR: plate_no, or_no required
+
+  MS: expiry_date required (must be future date)
+
+  IT: serial_no, license_key required when applicable
+
+  CE: serial_no, ntc_license_no, ntc_expiry required
+
+  SE: serial_no, calibration_cert, calibration_expiry required
+
+  UPIS: nea_asset_code, depreciation_rate (0-100), installation_date, feeder required
+
+  ALL schemas: sanitize strings - strip HTML, trim whitespace.
+
+  Reject any string starting with =, +, -, @ (CSV injection prevention).
+  -------------------------------------------------------------------------------------
+
++----------+--------------------------------------------+--------------+
+| E3       | Stock Movements and Lifecycle Engine       | Sprints 3-4  |
+|          |                                            |              |
+| EPIC     |                                            |              |
++----------+--------------------------------------------+--------------+
+
+E3-T1: Atomic stock movement RPC
+
+  ------------------------------------------------------------------------------
+  CLAUDE CODE PROMPT
+
+  Create a Supabase RPC function process_stock_movement() in plpgsql.
+
+  Parameters: item_id, movement_type, quantity, reference_no, member_id,
+
+  location, notes, performed_by, manager_override, override_reason
+
+  Inside the function (single transaction):
+
+  1. SELECT inventory_stock FOR UPDATE (lock row)
+
+  2. If movement_type=issue and quantity > qty_on_hand:
+
+  If NOT manager_override: RAISE EXCEPTION with SQLSTATE P0001
+
+  If manager_override: log warning to audit_log
+
+  3. UPDATE inventory_stock (add or subtract qty)
+
+  4. INSERT into stock_movements
+
+  5. Determine new lifecycle_status from movement_type
+
+  6. INSERT into lifecycle_events
+
+  7. If qty_on_hand now <= reorder_level: INSERT into reorder_alerts
+
+  8. RETURN json with movement_id and new_qty_on_hand
+
+  Create the Next.js API route app/api/movements/route.ts that calls this RPC.
+
+  withAuth([all staff roles]). Validate input with Zod before calling RPC.
+  ------------------------------------------------------------------------------
+
++----------+--------------------------------------------+--------------+
+| E4       | Integrations: MIMS, EBS2000, CAS2000       | Sprints 5-7  |
+|          |                                            |              |
+| EPIC     |                                            |              |
++----------+--------------------------------------------+--------------+
+
+E4-T1: MIMS n8n Workflow A
+
+  -------------------------------------------------------------------------------------
+  CLAUDE CODE PROMPT
+
+  Generate the n8n workflow JSON for IMIS-MIMS-001 (delta member sync).
+
+  Nodes:
+
+  1. Cron trigger: */15 * * * *
+
+  2. Supabase HTTP: SELECT MAX(synced_at) FROM members
+
+  3. HTTP Request: GET {MIMS_API_URL}/api/members?since={{lastSync}}
+
+  Header: X-Api-Key: {{$env.MIMS_API_KEY}}
+
+  4. IF: response.success === true AND data.length > 0
+
+  5. Supabase upsert: POST to members table, conflict on mims_member_id
+
+  Map: mims_member_id, full_name, membership_type, status, synced_at=NOW()
+
+  6. Supabase insert: integration_log with source_system=MIMS, status=success
+
+  Error branch from any node:
+
+  - Supabase insert: integration_log with status=error, error_msg (no API key in msg)
+
+  - HTTP: POST to Resend API to email system_admin users
+
+  Environment variables used: MIMS_API_URL, MIMS_API_KEY (from Railway env vars)
+  -------------------------------------------------------------------------------------
+
+E4-T2: EBS2000 HMAC webhook + retry
+
+  ----------------------------------------------------------------------------------------
+  CLAUDE CODE PROMPT
+
+  Create lib/webhooks/sign.ts:
+
+  signPayload(payload: object): string
+
+  - JSON.stringify payload
+
+  - HMAC-SHA256 with N8N_WEBHOOK_SECRET
+
+  - Return hex digest as X-IMIS-Signature header value
+
+  verifySignature(payload: string, signature: string): boolean
+
+  - Recompute HMAC, constant-time compare with timingSafeEqual
+
+  app/api/webhooks/transaction-created/route.ts:
+
+  - Called internally after successful stock-out
+
+  - Signs payload, POSTs to n8n webhook URL
+
+  Generate n8n workflow JSON IMIS-EBS-001:
+
+  Node 1: Webhook trigger (POST)
+
+  Node 2: Verify X-IMIS-Signature (HMAC check in Function node)
+
+  If fail: log security_violation to integration_log, return 401
+
+  Node 3: Validate payload structure
+
+  Node 4: HTTP POST to EBS2000 /api/billing/records
+
+  Node 5 (success): UPDATE transactions SET ebs_billing_ref, ebs_sync_status=synced
+
+  Node 6 (5xx error): retry 3x with 10s/30s/90s wait. After 3 fails: set pending_billing
+
+  Node 7 (4xx error): set failed_billing immediately (no retry)
+
+  Final: INSERT to integration_log
+  ----------------------------------------------------------------------------------------
+
+E4-T3: CAS2000 NEA COA journal workflow
+
+  ----------------------------------------------------------------------------------------
+  CLAUDE CODE PROMPT
+
+  Generate n8n workflow JSON IMIS-CAS-001:
+
+  Node 1: Webhook trigger (POST) - same HMAC verification as EBS2000
+
+  Node 2: Determine journal type from movement_type:
+
+  issue -> COGS (Dr 5110 / Cr 1540)
+
+  adjust -> Adjustment (Dr 5120 / Cr 1540)
+
+  dispose -> Disposal (Dr 5130 / Cr 1920)
+
+  Node 3: Build journal payload with NEA COA account codes
+
+  Node 4: Validate balance: sum(debits) must equal sum(credits)
+
+  If unbalanced: log error, do NOT post to CAS2000
+
+  Node 5: HTTP POST to CAS2000 /api/journals
+
+  Node 6: Store cas_journal_ref in transactions table
+
+  Node 7: INSERT to integration_log
+
+  Also generate workflow IMIS-CAS-RECONCILE:
+
+  Cron: 0 23 * * *
+
+  Compare SUM of IMIS transaction.total_amount vs CAS2000 journal total_debits for today
+
+  Write result. If variance > 0: email finance_officer.
+  ----------------------------------------------------------------------------------------
+
++----------+--------------------------------------------+--------------+
+| E5       | Reports, Bulk Import, Hardening            | Sprints 9-10 |
+|          |                                            |              |
+| EPIC     |                                            |              |
++----------+--------------------------------------------+--------------+
+
+E5-T1: Report generation with signed URL downloads
+
+  -----------------------------------------------------------------------------------------
+  CLAUDE CODE PROMPT
+
+  Create lib/reports/generate.ts with generateReport(type, params, role).
+
+  Security rules:
+
+  - finance_officer: can only access billing_reconciliation and accounting_reconciliation
+
+  - inventory_manager: all operational reports
+
+  - auditor: all reports read-only
+
+  - system_admin: all reports
+
+  CSV export security (apply to ALL string cells):
+
+  sanitizeCell(value: string): string
+
+  - if value starts with =, +, -, @: prepend with single quote
+
+  - trim whitespace
+
+  - strip HTML tags
+
+  PDF export security:
+
+  - Generate with pdf-lib server-side
+
+  - Upload to Supabase Storage PRIVATE bucket (not public)
+
+  - Create signed URL with 15-minute expiry
+
+  - Log to audit_log: user_id, report_type, downloaded_at
+
+  - Return only the signed URL (never the file directly)
+
+  Create all 12 report query functions with proper RLS-aware Supabase calls.
+  -----------------------------------------------------------------------------------------
+
++----------+--------------------------------------------+--------------+
+| E6       | Production Deployment and Go-Live          | Sprint 12    |
+|          |                                            |              |
+| EPIC     |                                            |              |
++----------+--------------------------------------------+--------------+
+
+E6-T1: Docker and Railway production deployment
+
+  --------------------------------------------------------------------------------------------
+  CLAUDE CODE PROMPT
+
+  Generate Dockerfiles and railway.json for all IMIS Railway services.
+
+  1. Dockerfile for imis-app (Next.js multi-stage build, node:20-alpine)
+
+  2. Install Railway restart policy (ON_FAILURE):
+
+  npm install -g pm2 pm2-railway-managed
+
+  pm2-service-install -n IMIS
+
+  pm2 start "npm start" --name imis-app --cwd C:\imis
+
+  pm2 save
+
+  3. IIS reverse proxy configuration (web.config):
+
+  - URL Rewrite rules to proxy all requests to localhost:3000
+
+  - HTTPS redirect rule (HTTP 80 -> HTTPS 443)
+
+  - Static file serving bypass for /public folder
+
+  4. SSL certificate (win-acme for Let's Encrypt):
+
+  # TLS handled automatically by Railway - no manual SSL config needed
+
+  5. Environment variables in Windows:
+
+  [System.Environment]::SetEnvironmentVariable("NEXT_PUBLIC_SUPABASE_URL", "...", "Machine")
+
+  (one command per variable)
+
+  6. Verify deployment: curl -k https://localhost/ should return 200
+  --------------------------------------------------------------------------------------------
+
+E6-T2: Production Railway secrets rotation
+
+  -----------------------------------------------------------------------------------------------
+  CLAUDE CODE PROMPT
+
+  Generate the complete production Railway setup commands:
+
+  # 1. Create production Railway project
+
+  railway login && railway init --name imis-production
+
+  # 2. Generate new secrets (NEVER reuse dev secrets in production)
+
+  node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" # N8N_ENCRYPTION_KEY
+
+  node -e "console.log(require('crypto').randomBytes(24).toString('base64'))" # passwords
+
+  # 3. Set all Railway environment variables for n8n service
+
+  railway variables set N8N_ENCRYPTION_KEY=[generated above]
+
+  railway variables set N8N_BASIC_AUTH_ACTIVE=true
+
+  railway variables set NODE_ENV=production
+
+  # 4. Deploy n8n
+
+  cd services/n8n && railway up
+
+  # 5. Verify health check
+
+  curl https://[prod-n8n-url]/healthz
+
+  # 6. Run final security sweep
+
+  npm audit --audit-level=critical
+
+  git log --all -p | grep -iE "(key|secret|password)" | grep -v example
+  -----------------------------------------------------------------------------------------------
+
+8. Legacy System Simulators
+
+Because EBS2000 and CAS2000 are legacy on-premises systems, vendor API access takes weeks. The Node.js simulators let you build and test all integration workflows immediately. When real vendor access arrives, swap the base URL in Railway environment variables. No workflow changes needed.
+
+8.1 Simulator overview
+
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  System     Port (local)   Railway URL                            API key              What it simulates
+  ---------- -------------- -------------------------------------- -------------------- ---------------------------------------------------------------------------------------
+  MIMS       3001           https://imis-sim.railway.app/mims      MIMS-TEST-KEY-2026   8 seeded members, delta sync with ?since= param, service requests
+
+  EBS2000    3002           https://imis-sim.railway.app/ebs2000   EBS-TEST-KEY-2026    Billing record creation, void, list. Failure injection with X-Simulate-Failure: true
+
+  CAS2000    3003           https://imis-sim.railway.app/cas2000   CAS-TEST-KEY-2026    Journal posting with balance validation, chart of accounts, reversal. NEA COA seeded.
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+8.2 Starting simulators locally
+
+  -----------------------------------------------------------------------
+  CODE
+
+  cd legacy-simulators
+
+  npm install
+
+  npm start
+
+  # Output:
+
+  # MIMS -> http://localhost:3001 (Key: MIMS-TEST-KEY-2026)
+
+  # EBS2000 -> http://localhost:3002 (Key: EBS-TEST-KEY-2026)
+
+  # CAS2000 -> http://localhost:3003 (Key: CAS-TEST-KEY-2026)
+  -----------------------------------------------------------------------
+
+8.3 Deploying simulators to Railway
+
+  -----------------------------------------------------------------------
+  CODE
+
+  # Deploy the simulator gateway (all 3 systems on one port)
+
+  cd legacy-simulators
+
+  railway login
+
+  railway init --name imis-simulators
+
+  railway up
+
+  # Generate public domain in Railway dashboard
+
+  # Then update n8n credentials to point to Railway URLs:
+
+  # MIMS -> https://YOUR-APP.up.railway.app/mims
+
+  # EBS2000 -> https://YOUR-APP.up.railway.app/ebs2000
+
+  # CAS2000 -> https://YOUR-APP.up.railway.app/cas2000
+
+  # Verify all three are running:
+
+  curl https://YOUR-APP.up.railway.app/mims/api/health
+
+  curl https://YOUR-APP.up.railway.app/ebs2000/api/health
+
+  curl https://YOUR-APP.up.railway.app/cas2000/api/health
+  -----------------------------------------------------------------------
+
+8.4 Quick API test examples
+
+  ------------------------------------------------------------------------
+  CODE
+
+  # MIMS - delta sync (members changed after Jan 1 2025)
+
+  curl "http://localhost:3001/api/members?since=2025-01-01T00:00:00Z" \
+
+  -H "X-Api-Key: MIMS-TEST-KEY-2026"
+
+  # EBS2000 - create billing record
+
+  curl -X POST http://localhost:3002/api/billing/records \
+
+  -H "X-Api-Key: EBS-TEST-KEY-2026" \
+
+  -H "Content-Type: application/json" \
+
+  -d '{"mims_member_id":"MIMS-0001","reference_no":"IMS-TXN-001",
+
+  "items":[{"sku":"LM-2026-001","quantity":50,"unit_price":65.00}]}'
+
+  # EBS2000 - simulate failure (test retry logic)
+
+  curl -X POST http://localhost:3002/api/billing/records \
+
+  -H "X-Api-Key: EBS-TEST-KEY-2026" \
+
+  -H "X-Simulate-Failure: true" -d '{}'
+
+  # CAS2000 - post COGS journal (NEA COA)
+
+  curl -X POST http://localhost:3003/api/journals \
+
+  -H "X-Api-Key: CAS-TEST-KEY-2026" \
+
+  -H "Content-Type: application/json" \
+
+  -d '{"journal_type":"COGS","description":"Stock issued - IMS-TXN-001",
+
+  "entries":[{"account_code":"5110","type":"Debit","amount":3250.00},
+
+  {"account_code":"1540","type":"Credit","amount":3250.00}]}'
+  ------------------------------------------------------------------------
+
+8.5 Transitioning simulators to live systems
+
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Step                           Action                                                                                               Sprint
+  ------------------------------ ---------------------------------------------------------------------------------------------------- -------------------------------------
+  1                              Request API documentation from EBS2000 vendor - file import format if no REST API                    S1 (send request immediately)
+
+  2                              Request API documentation from CAS2000 vendor - confirm NEA COA account codes with Finance Officer   S1
+
+  3                              Request MIMS technical documentation and API credentials                                             S1
+
+  4                              Update n8n credentials: swap simulator Base URL for vendor test environment URL                      S5-S7 (when vendor provides access)
+
+  5                              Test all three n8n workflows against vendor test environment                                         S5-S7
+
+  6                              Fix any payload format differences from simulator assumptions                                        S5-S7
+
+  7                              UAT sign-off on real system integrations                                                             S11
+
+  8                              Update Railway env vars to production vendor URLs and API keys                                       S12 go-live
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+9. Compliance Requirements
+
+9.1 RA 9184 - Government Procurement (if government client)
+
+  ---------------------------------------------------------------------------------------------------------------------
+  Document                                               Source                       Deadline
+  ------------------------------------------------------ ---------------------------- ---------------------------------
+  PhilGEPS registration certificate (platinum or gold)   PhilGEPS portal              Before contract signing
+
+  Mayor's Permit (current year)                          LGU business permit office   Before contract signing
+
+  BIR Certificate of Registration (COR)                  BIR RDO                      Before contract signing
+
+  DTI / SEC registration certificate                     DTI or SEC                   Before contract signing
+
+  Omnibus Sworn Statement (notarised)                    Notary public                Before bid submission
+
+  BIR Tax Clearance Certificate                          BIR                          Before contract signing
+
+  Audited Financial Statements (if > threshold)          CPA-audited                  Before contract signing
+
+  Program of Work (POW) aligned to TOR                   Dev team                     Sprint 1
+
+  Progress Billing Reports                               Dev team                     Each milestone (20/20/20/20/20)
+
+  Inspection and Acceptance Report (IAR)                 Dev team + Client            Sprint 12 go-live
+
+  Project Completion Report                              Dev team                     Sprint 12
+
+  Certificate of Final Acceptance                        Client                       After 12-month warranty
+  ---------------------------------------------------------------------------------------------------------------------
+
+  Do NOT start any work without a signed Notice to Proceed (NTP) from the procuring entity. All work performed before the NTP is at the consultant's risk under RA 9184.
+
+9.2 RA 10173 - Data Privacy Act compliance
+
+  --------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Requirement                            IMIS implementation                                                                                    Sprint
+  -------------------------------------- ------------------------------------------------------------------------------------------------------ ----------------
+  NPC registration (if covered entity)   Assist client DPO register IMIS as a data processing system with NPC                                   S11
+
+  Privacy Impact Assessment (DPIA)       Co-author with client DPO. Cover all MIMS data flows and member personal data.                         S11
+
+  Data Processing Agreement              Execute DPA with Supabase, Railway, Vercel, Resend                                                     Before S1
+
+  Data minimisation                      MIMS sync caches only: mims_member_id, full_name, membership_type, status. No other personal fields.   S5
+
+  Consent management                     System does not collect personal data beyond NEA mandate scope                                         All sprints
+
+  Access control                         RBAC: each role can only access data their function requires                                           S1
+
+  Encryption in transit                  TLS 1.3 on Railway, Vercel, Supabase. IIS forces HTTPS redirect.                                       S1, S12
+
+  Encryption at rest                     AES-256 on Supabase DB and Storage (default). Railway infrastructure encrypted at rest by provider.    S1, S12
+
+  Audit logging                          All data access and API calls logged to immutable audit_log and integration_log                        S1
+
+  Breach notification procedure          Documented procedure: detect, contain, assess, notify NPC within 72 hours                              S11
+
+  Data retention policy                  Define retention periods: operational data 5 years, audit logs 7 years                                 S11
+
+  Right to access / erasure              Admin procedure documented for data subject requests via DPO                                           S11
+  --------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+9.3 NEA compliance
+
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Requirement                             Detail
+  --------------------------------------- ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+  NEA Uniform System of Accounts (USOA)   All CAS2000 journal entries must use NEA-prescribed account codes. Confirm codes with Finance Officer before Sprint 7.
+
+  UPIS classification                     UPIS assets classified under Account 101-199 per NEA chart. Depreciation rates follow NEA-prescribed schedules.
+
+  Line Materials classification           Line Materials may be capital (installed on distribution system, Account 154) or operating supplies depending on use. Finance Officer decides classification.
+
+  REC reporting requirements              Monthly, quarterly, and annual inventory reports must align with NEA reporting templates if required by the cooperative's NEA auditor.
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+10. Deliverables Detail
+
+10.1 D3 - Documentation set
+
+  -------------------------------------------------------------------------------------------------
+  Document                              Audience             Format           Sprint   Est. pages
+  ------------------------------------- -------------------- ---------------- -------- ------------
+  Inventory Staff user manual           Staff                PDF + printed    S11      30-40
+
+  Inventory Manager user manual         Managers             PDF + printed    S11      40-50
+
+  Finance Officer user manual           Finance team         PDF + printed    S11      20-25
+
+  System Administrator guide            IT admin             PDF + printed    S11      50-60
+
+  Integration runbook (n8n)             IT admin / Dev       PDF + Markdown   S11      30-40
+
+  Database schema reference             Dev / IT admin       PDF + Markdown   S9       15-20
+
+  Railway and Docker deployment guide   IT admin             PDF + Markdown   S12      15-20
+
+  API integration reference             Dev / IT admin       PDF + Markdown   S11      20-25
+
+  Data Privacy Impact Assessment        DPO / NPC            PDF (formal)     S11      30-40
+
+  System security plan                  IT admin / Auditor   PDF (formal)     S11      20-30
+
+  Quick reference cards (per role)      All users            Laminated A4     S12      1 per role
+  -------------------------------------------------------------------------------------------------
+
+10.2 D4 - Training programme
+
+  ---------------------------------------------------------------------------------------------------------------------------------
+  Session                             Audience                 Duration   Format                                         Sprint
+  ----------------------------------- ------------------------ ---------- ---------------------------------------------- ----------
+  Session 1: Inventory Staff          All inventory staff      3 hours    Instructor-led, hands-on staging environment   S12
+
+  Session 2: Inventory Manager        All inventory managers   4 hours    Instructor-led, hands-on                       S12
+
+  Session 3: Finance Officer          Finance team             2 hours    Reports and reconciliation focused             S12
+
+  Session 4: System Administrator     IT admin (1-2 persons)   6 hours    Technical walkthrough                          S12
+
+  Session 5: Train-the-Trainer        Designated power users   4 hours    Facilitated practice                           S12
+
+  Session 6: Post-go-live refresher   All users                1 hour     Online or in-person - Month 2                  Post S12
+  ---------------------------------------------------------------------------------------------------------------------------------
+
+10.3 D5 - 12-month maintenance plan
+
+  -------------------------------------------------------------------------------------------------------------
+  Severity      Definition                                               Response           Resolution
+  ------------- -------------------------------------------------------- ------------------ -------------------
+  P1 Critical   System down or data loss occurring                       2 hours            8 business hours
+
+  P2 High       Core function unavailable for all users                  4 hours            16 business hours
+
+  P3 Medium     Function impaired for some users or integration errors   8 business hours   3 business days
+
+  P4 Low        Minor issue, cosmetic bug, enhancement request           1 business day     10 business days
+  -------------------------------------------------------------------------------------------------------------
+
+-   Included: bug fixes all severities, security patches within 5 business days of critical release, integration reconnection on vendor API changes (up to 3 incidents per year), monthly backup verification, quarterly system health reports, minor enhancements (up to 16 hours per month)
+
+-   Excluded: new modules or major features (separate SOW), hardware procurement, third-party vendor system changes beyond integration spec
+
+10.4 Pricing framework
+
+  Framework only. Final pricing agreed in contract/SOW. Government contracts subject to RA 9184 BAC-approved budget.
+
+  ----------------------------------------------------------------------------------------
+  Component                             Basis                     Indicative range (PHP)
+  ------------------------------------- ------------------------- ------------------------
+  D1: Platform development (S1-S9)      Per sprint, 2 devs        900,000 - 1,350,000
+
+  D2: Integration development (S5-S7)   Per integration           150,000 - 300,000
+
+  D3: Documentation (S9-S11)            Per document type         80,000 - 150,000
+
+  D4: Training sessions (S12)           Per session + materials   60,000 - 120,000
+
+  D5: 12-month maintenance              Monthly retainer          30,000 - 60,000/month
+
+  D6: Compliance documentation          Fixed fee                 40,000 - 80,000
+
+  Railway production setup (Docker)     One-time                  10,000 - 20,000
+
+  Simulators setup and deployment       One-time (included)       Included in D1
+  ----------------------------------------------------------------------------------------
+
+Billing milestones (standard for government contracts):
+
+1.  20% downpayment upon contract signing and NTP
+
+2.  20% upon MVP demo acceptance (end of Sprint 4)
+
+3.  20% upon all integration sign-off (end of Sprint 7)
+
+4.  20% upon UAT sign-off and documentation delivery (end of Sprint 11)
+
+5.  20% upon go-live and training completion (end of Sprint 12)
+
+11. Sprint Velocity with Claude Code
+
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Sprint                  Standard    Solo full-time + Claude Code   Solo part-time + Claude Code   Key Claude Code tasks
+  ----------------------- ----------- ------------------------------ ------------------------------ -----------------------------------------------------------------------------
+  S1: Foundation          2 weeks     3-4 days                       7-8 days                       Schema SQL, RLS policies, withAuth(), railway.json, admin shell
+
+  S2: Barcode + Catalog   2 weeks     3-4 days                       7-8 days                       bwip-js, pdf-lib, 13 Zod schemas, dynamic category forms
+
+  S3: Movements           2 weeks     4-5 days                       8-10 days                      Supabase RPC, lifecycle state machine, movement engine
+
+  S4: Alerts + MVP        2 weeks     3-4 days                       7-8 days                       n8n workflow JSON, cron config, dashboard components
+
+  S5: MIMS                2 weeks     4-5 days                       8-10 days                      n8n Workflow A JSON, HMAC helpers, upsert logic
+
+  S6: EBS2000             2 weeks     4-5 days                       8-10 days                      Webhook HMAC, retry workflow JSON, billing adapter
+
+  S7: CAS2000             2 weeks     4-5 days                       8-10 days                      Journal builder, balance validator, reconciliation workflow JSON
+
+  S8: Disposal + UPIS     2 weeks     4-5 days                       8-10 days                      Multi-step approval, depreciation scheduler
+
+  S9: Reports             2 weeks     4-5 days                       8-10 days                      12 report queries, pdf-lib exports, signed URL generation
+
+  S10: Hardening          2 weeks     3-4 days                       6-7 days                       Index SQL, k6 load test scripts, OWASP remediation
+
+  S11: UAT + Docs         2 weeks     2 weeks                        3-4 weeks                      Documentation generation, DPIA template (human review required)
+
+  S12: Deploy + Train     2 weeks     2 weeks                        3-4 weeks                      Dockerfile, railway.json per service, Railway env vars, Supabase prod setup
+
+  TOTAL                   24 weeks    14-16 weeks                    22-26 weeks                    ~40% reduction on coding sprints S1-S10
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+  Sprints 11 and 12 are NOT accelerated by Claude Code. UAT requires real users. Training requires live sessions. Production deployment requires careful human review of every environment variable and IIS configuration. Do not rush these.
+
+12. Overall Acceptance Criteria
+
+12.1 Platform and modules (D1)
+
+  ----- -------------------------------------------------------------------------------------------------------
+  [ ]   All 13 asset modules operational with correct category-specific attribute forms
+
+  [ ]   Barcode generation, A4 label print, thermal label print, USB scan, and mobile camera scan all working
+
+  [ ]   Lifecycle state machine enforces valid transitions for all 13 categories
+
+  [ ]   PMS scheduler creates alerts for Motor Pool vehicles due within 14 days
+
+  [ ]   Medical expiry alert fires 90 days before expiry date
+
+  [ ]   Disposal workflow requires system_admin authorization and posts write-off to CAS2000
+
+  [ ]   UPIS depreciation posts correctly on January 1 (or manual trigger in test)
+
+  [ ]   All 12 reports generate with correct data and export to both CSV and PDF
+
+  [ ]   PDF downloads return signed URLs that expire after 15 minutes
+
+  [ ]   System sustains 50 concurrent users with p95 response time under 2 seconds (k6 report)
+
+  [ ]   System accessible via Railway public URL over HTTPS (TLS enforced by Railway automatically)
+
+  [ ]   All API routes return 401 without Authorization header
+
+  [ ]   All API routes return 403 for wrong role
+  ----- -------------------------------------------------------------------------------------------------------
+
+12.2 Integrations (D2)
+
+  ----- ---------------------------------------------------------------------------------------------------------
+  [ ]   MIMS member sync runs cleanly for 3 consecutive production days (n8n execution log shows zero failures)
+
+  [ ]   Only records changed since last sync are fetched - delta sync verified in workflow log
+
+  [ ]   Stock-out triggers EBS2000 billing record within 60 seconds (timed test on production)
+
+  [ ]   EBS2000 billing reference stored in transactions.ebs_billing_ref
+
+  [ ]   Stock-out triggers CAS2000 journal within 60 seconds using correct NEA COA account codes
+
+  [ ]   CAS2000 journal reference stored in transactions.cas_journal_ref
+
+  [ ]   Nightly reconciliation shows zero variance for 3 consecutive nights
+
+  [ ]   EBS2000 failure retries exactly 3 times then flags pending_billing (tested with X-Simulate-Failure)
+
+  [ ]   HMAC signature mismatch returns 401 and logs security_violation to integration_log
+
+  [ ]   All integration events written to integration_log with correct source_system and status
+  ----- ---------------------------------------------------------------------------------------------------------
+
+12.3 Security (D6 + continuous)
+
+  ----- ---------------------------------------------------------------------------------------------------
+  [ ]   SSL Labs test on production URL returns Grade A or higher
+
+  [ ]   RLS verified: unauthenticated Supabase client returns 0 rows on all 15 tables
+
+  [ ]   No UPDATE or DELETE possible on audit_log or integration_log (test with direct SQL attempt)
+
+  [ ]   No cross-role data access: inventory_staff cannot read finance_officer-restricted data
+
+  [ ]   OWASP ZAP baseline scan returns zero HIGH severity findings
+
+  [ ]   npm audit returns zero critical vulnerabilities
+
+  [ ]   No secrets visible in Railway logs, Vercel function logs, or browser developer tools network tab
+
+  [ ]   CSV exports reject cells with = prefix (tested with crafted malicious CSV value)
+
+  [ ]   Report PDF signed URLs expire after 15 minutes (test: access URL at 16 minutes - must return 403)
+
+  [ ]   Every audit_log entry has user_id, action, resource, and created_at populated
+  ----- ---------------------------------------------------------------------------------------------------
+
+12.4 Compliance (D6)
+
+  ----- ----------------------------------------------------------------------------------------------
+  [ ]   PhilGEPS registration certificate presented to BAC before contract signing
+
+  [ ]   Inspection and Acceptance Report (IAR) signed by authorized client representative at go-live
+
+  [ ]   DPIA completed, reviewed by client DPO, and on file
+
+  [ ]   Data Processing Agreements executed with all third-party vendors before Sprint 1
+
+  [ ]   Certificate of Final Acceptance to be issued after 12-month maintenance period
+  ----- ----------------------------------------------------------------------------------------------
+
+13. Pre-Sprint 1 Checklist
+
+Complete every item below before writing a single line of code. Several of these have long lead times (vendor responses, PhilGEPS registration, DPO identification). Start them immediately.
+
+13.1 Client and vendor actions (start immediately)
+
+  ----- ---------------------------------------------------------------------------------------------------------------------------
+  [ ]   Railway CLI installed and logged in: npm install -g @railway/cli && railway login
+
+  [ ]   Contact EBS2000 vendor: request API documentation or flat-file import specification
+
+  [ ]   Contact CAS2000 vendor: request API documentation or file import format
+
+  [ ]   Contact MIMS technical team: request REST API credentials or DB query access
+
+  [ ]   Confirm NEA Chart of Account codes with cooperative Finance Officer (especially COGS, Inventory Asset, UPIS depreciation)
+
+  [ ]   Identify client Data Privacy Officer (DPO) for DPIA co-authoring in Sprint 11
+
+  [ ]   Railway account created and CLI installed: npm install -g @railway/cli
+
+  [ ]   Request test/sandbox environments for EBS2000 and CAS2000
+
+  [ ]   Confirm barcode scanner hardware available for testing (USB HID scanner + Android or iOS device)
+
+  [ ]   Get signed Notice to Proceed (NTP) - DO NOT start any work without this
+  ----- ---------------------------------------------------------------------------------------------------------------------------
+
+13.2 Consultant procurement documents
+
+  ----- ---------------------------------------------------------------------------------
+  [ ]   PhilGEPS registration - verify current and active
+
+  [ ]   Mayor's Permit for current year
+
+  [ ]   BIR Certificate of Registration
+
+  [ ]   DTI / SEC registration certificate
+
+  [ ]   Omnibus Sworn Statement (notarised)
+
+  [ ]   BIR Tax Clearance Certificate
+
+  [ ]   Audited Financial Statements (if contract value exceeds threshold)
+
+  [ ]   Performance / Surety Bond (if required by BAC) - typically 5% of contract value
+  ----- ---------------------------------------------------------------------------------
+
+13.3 Technical setup
+
+  ----- --------------------------------------------------------------------------------------
+  [ ]   Supabase project created and connection string copied to .env.local
+
+  [ ]   Vercel account connected to GitHub repository
+
+  [ ]   Railway account created and CLI installed (npm install -g @railway/cli)
+
+  [ ]   Domain or subdomain allocated for the IMIS (e.g. imis.samelco.ph)
+
+  [ ]   Data Processing Agreements signed with Supabase, Railway, Vercel, and Resend
+
+  [ ]   Execute: railway login && railway init --name imis-n8n
+
+  [ ]   Execute: railway init --name imis-simulators (separate Railway service)
+
+  [ ]   Deploy simulators to Railway and verify all three health checks return 200
+
+  [ ]   Seed simulator with cooperative-specific member account numbers and billing patterns
+
+  [ ]   n8n deployed to Railway with N8N_ENCRYPTION_KEY set to 32-char random hex
+  ----- --------------------------------------------------------------------------------------
+
+13.4 Key vendor questions to ask in Week 1
+
+-   EBS2000: Does the system have a REST API? If yes - what is the endpoint for creating a billing record and what authentication method (API key, OAuth, basic auth)?
+
+-   EBS2000: If no REST API - what is the flat file import format (CSV, XML, fixed-width)? What are the required fields and field order for a billing import?
+
+-   CAS2000: Does the system have a REST API or web service for journal entry posting?
+
+-   CAS2000: What exact account codes does the cooperative use for Inventory Asset, Cost of Goods Sold, and UPIS Depreciation Expense?
+
+-   MIMS: Is there a REST API for member lookup? If not - is ODBC direct database query available? What fields are on the member record?
+
+-   All systems: Are sandbox or test environments available for integration development and testing before UAT?
+
+-   All systems: Is there existing documentation on integration - has anyone connected to these systems before from another application?
+
+END OF DOCUMENT
+
+IMIS Project Master Document v4.1 - Railway + Docker Edition - Confidential
