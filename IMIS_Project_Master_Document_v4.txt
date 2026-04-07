@@ -25,7 +25,7 @@ v4.1 - Updated: Railway Docker deployment (no Railway-hosted Docker container re
 
   Integrations          MIMS (member sync) + EBS2000 (billing) + CAS2000 (NEA COA journals)
 
-  Stack                 Next.js 14 + Supabase + n8n + Railway (Docker) + Node.js 20 LTS
+  Stack                 Next.js (App Router) + Firebase Auth + Railway PostgreSQL (Drizzle ORM) + n8n + Railway (Docker) + Node.js 20 LTS
 
   Security              TLS 1.3 in transit + AES-256 at rest + JWT + RBAC + RLS
 
@@ -156,13 +156,13 @@ The asset categories in the SOW identify this client as a NEA-member Rural Elect
   --------------------------------------------------------------------------------------------------------------------------------------------------------
   Layer               Technology                   Version    Railway/hosting
   ------------------- ---------------------------- ---------- --------------------------------------------------------------------------------------------
-  Frontend / API      Next.js 14 (App Router)      14.x       Railway Docker container (imis-app service)
+  Frontend / API      Next.js (App Router)         Latest     Railway Docker container (imis-app service)
 
-  Mobile scanning     Next.js PWA + html5-qrcode   Latest     Same Vercel deployment
+  Mobile scanning     Next.js PWA + html5-qrcode   Latest     Same Railway deployment
 
-  Database            Supabase PostgreSQL          Latest     Supabase cloud (managed)
+  Database            Railway PostgreSQL            Latest     Railway addon (DATABASE_URL auto-injected)
 
-  Auth                Supabase Auth                Latest     Supabase cloud
+  Auth                Firebase Auth                Latest     Firebase project (Admin SDK server / Client SDK browser)
 
   Integration ETL     n8n self-hosted              Latest     Railway service: imis-n8n
 
@@ -172,13 +172,13 @@ The asset categories in the SOW identify this client as a NEA-member Rural Elect
 
   Process manager     Railway restart policy       N/A        ON_FAILURE with max 3 retries - configured in railway.json per service
 
-  Barcode engine      bwip-js (server-side)        Latest     Next.js API route (Vercel)
+  Barcode engine      bwip-js (server-side)        Latest     Next.js API route (Railway)
 
-  Label printing      pdf-lib                      Latest     Next.js API route (Vercel)
+  Label printing      pdf-lib                      Latest     Next.js API route (Railway)
 
-  Email alerts        Resend + Nodemailer          Latest     Vercel Edge Function
+  Email alerts        Resend                       Latest     Railway service (Next.js API route)
 
-  Report PDF          pdf-lib (server-side)        Latest     Next.js API route (Vercel)
+  Report PDF          pdf-lib (server-side)        Latest     Next.js API route (Railway)
   --------------------------------------------------------------------------------------------------------------------------------------------------------
 
 3.2 Railway deployment topology
@@ -192,7 +192,7 @@ The asset categories in the SOW identify this client as a NEA-member Rural Elect
 
   IMIS web app       imis-app (Railway)                       https://imis-app.up.railway.app   Next.js 14 app in Docker container. All users access via browser. Zero client infrastructure.
 
-  PostgreSQL         Supabase (not Railway)   5432            Supabase connection string        All IMIS data + Auth + Storage + Realtime
+  PostgreSQL         Railway PostgreSQL addon  5432            DATABASE_URL (auto-injected)       All IMIS data. Auth via Firebase. Storage via Firebase Storage.
   ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
   All services run as Docker containers on Railway. The client needs zero server infrastructure - only a browser. Railway handles TLS, routing, auto-restart, scaling, and rolling deploys. Vercel is used for preview deployments only (optional). Production runs entirely on Railway.
@@ -204,11 +204,11 @@ The asset categories in the SOW identify this client as a NEA-member Rural Elect
   ----------------- ---------------------- ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ --------
   In transit        TLS 1.3                Railway and Vercel enforce TLS 1.3 on all public endpoints. Never expose HTTP. Railway enforces HTTPS automatically on all services. No manual redirect config needed.   S1
 
-  At rest (DB)      AES-256                Supabase encrypts all PostgreSQL data at rest by default. Verify in Supabase project Settings > Infrastructure.                                                          S1
+  At rest (DB)      AES-256                Railway PostgreSQL encrypts all data at rest (provider default). Verify in Railway project settings.                                                                S1
 
-  At rest (files)   AES-256                Supabase Storage encrypts all uploaded files (PDFs, CSVs) at rest. Use signed URLs (15-min expiry) for downloads.                                                        S6
+  At rest (files)   AES-256                Firebase Storage encrypts all uploaded files (PDFs, CSVs) at rest. Use signed URLs (15-min expiry) for downloads.                                                       S6
 
-  Authentication    JWT (8-hour expiry)    Supabase Auth issues JWTs. All API routes verify Bearer token before processing. No anonymous route access.                                                              S1
+  Authentication    JWT (1-hour expiry)    Firebase Auth issues ID tokens. All API routes verify Bearer token via Firebase Admin SDK (verifyIdToken). No anonymous route access.                                   S1
 
   Authorization     RLS on every table     Row-Level Security enabled on all 15 tables. Policies filter by role. Client can never bypass RLS.                                                                       S1
 
@@ -374,7 +374,7 @@ The asset categories in the SOW identify this client as a NEA-member Rural Elect
   -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
   Workflow ID              Name                      Trigger                             System                               Security
   ------------------------ ------------------------- ----------------------------------- ------------------------------------ ---------------------------------------------------------------------
-  IMIS-MIMS-001            Member delta sync         Cron: every 15 min                  MIMS API -> Supabase members table   API key in Railway env var. Logs to integration_log.
+  IMIS-MIMS-001            Member delta sync         Cron: every 15 min                  MIMS API -> Railway PostgreSQL members table   API key in Railway env var. Logs to integration_log.
 
   IMIS-EBS-001             Billing record creation   Webhook from IMIS (HMAC-verified)   IMIS -> EBS2000 API                  HMAC-SHA256 signature verification. 3-retry with 10/30/90s backoff.
 
@@ -382,9 +382,9 @@ The asset categories in the SOW identify this client as a NEA-member Rural Elect
 
   IMIS-CAS-RECONCILE       Nightly reconciliation    Cron: 23:00 PHT daily               IMIS DB vs CAS2000 totals            Variance alert email to finance_officer if mismatch > 0.
 
-  IMIS-ALERT-DAILY         PMS + expiry alerts       Cron: 07:00 PHT daily               Supabase DB (read only)              service_role key never logged.
+  IMIS-ALERT-DAILY         PMS + expiry alerts       Cron: 07:00 PHT daily               Railway DB (read only)               DATABASE_URL never logged.
 
-  IMIS-UPIS-DEPRECIATION   Annual depreciation       Cron: Jan 1 00:01 PHT               Supabase DB + CAS2000                Dry-run mode available. Manual trigger for testing.
+  IMIS-UPIS-DEPRECIATION   Annual depreciation       Cron: Jan 1 00:01 PHT               Railway DB + CAS2000                 Dry-run mode available. Manual trigger for testing.
   -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 6. Sprint Plan - 12 Sprints x 2 Weeks
@@ -427,7 +427,7 @@ Sprint 1 key tasks
 
 -   Next.js 14 scaffold: App Router, TypeScript strict, TailwindCSS, ESLint, folder structure (/lib/auth, /lib/validation, /lib/barcode, /lib/inventory)
 
--   Supabase: all 15 tables in one migration file with RLS enabled on every table immediately after CREATE TABLE
+-   Railway PostgreSQL (Drizzle): all 15 tables in drizzle/migrations/0001_initial_schema.sql with RLS enabled on every table immediately after CREATE TABLE
 
 -   get_user_role() function, withAuth() middleware, 5-role profiles.role CHECK constraint
 
@@ -519,7 +519,7 @@ Sprint 2 acceptance checklist
 
 Sprint 3 key tasks
 
--   Supabase RPC function process_stock_movement(): atomic quantity update + lifecycle state change in one transaction - no race conditions
+-   Railway DB RPC function process_stock_movement() (deployed via drizzle/migrations/0005_process_stock_movement.sql): atomic quantity update + lifecycle state change in one transaction - no race conditions
 
 -   Movement types: receive, issue, return, adjust, transfer, dispose - each with role-based permission check in code (on top of RLS)
 
@@ -551,7 +551,7 @@ Sprint 4 key tasks
 
 -   MVP demo package: seed script for all 13 categories with 5-10 realistic items each, demo walkthrough script
 
--   Staging environment: full stack running on Vercel staging + Railway + Supabase with seeded demo data
+-   Staging environment: full stack running on Railway staging service + Firebase with seeded demo data
 
 Sprint 4 MVP acceptance checklist
 
@@ -562,7 +562,7 @@ Sprint 4 MVP acceptance checklist
 
   [ ]   IT license alert created for IT equipment with license_expiry 29 days from now
 
-  [ ]   Admin dashboard stock totals match direct Supabase query results
+  [ ]   Admin dashboard stock totals match direct Railway DB (psql/Drizzle) query results
 
   [ ]   Reorder alert fires within 5 seconds of stock dropping to reorder_level
 
@@ -605,7 +605,7 @@ Sprint 6 key tasks
 
 -   Retry: HTTP 5xx = retry 3 times (10s, 30s, 90s exponential backoff). HTTP 4xx = no retry (client error). After 3 failures: flag transaction as pending_billing.
 
--   Flat-file CSV adapter: generates EBS2000-compatible import CSV when REST is unavailable. Written to Supabase Storage. Admin downloads and imports manually.
+-   Flat-file CSV adapter: generates EBS2000-compatible import CSV when REST is unavailable. Written to Firebase Storage (private bucket). Admin downloads via signed URL and imports manually.
 
 -   Billing status column in transactions list: shows ebs_sync_status badge (synced / pending / failed) + billing_ref when available.
 
@@ -679,7 +679,7 @@ Sprint 9 - 12 reports delivered
 
 -   Report 12: Disposal summary - items disposed by type and category, total value written off
 
--   Security: CSV exports sanitize all cells (no =,+,-,@ injection). PDF reports stored in private Supabase Storage bucket. Downloads via signed URL with 15-min expiry. Every download logged to audit_log.
+-   Security: CSV exports sanitize all cells (no =,+,-,@ injection). PDF reports stored in private Firebase Storage bucket. Downloads via signed URL with 15-min expiry. Every download logged to audit_log.
 
 +-------------+---------------------------------------------------------------------+
 | Sprint 10   | Goal: Bulk import, DB indexes, k6 load test, OWASP scan, hardening. |
@@ -731,9 +731,9 @@ Sprint 12 key tasks
 
 -   Railway Docker production: build and push all Docker images, deploy imis-app, imis-n8n, imis-simulators via railway up. Railway auto-provisions TLS and domains. No server admin needed. CLI: railway up --detach
 
--   Railway production: separate Railway project (not dev). Rotate all secrets - new Supabase service_role key, new N8N_ENCRYPTION_KEY, new N8N_BASIC_AUTH_PASSWORD. Set NODE_ENV=production.
+-   Railway production: separate Railway project (not dev). Rotate all secrets - new DATABASE_URL (Railway PostgreSQL), new Firebase service account key, new N8N_ENCRYPTION_KEY, new N8N_BASIC_AUTH_PASSWORD. Set NODE_ENV=production.
 
--   Supabase production: enable Point-in-Time Recovery, 30-day backup retention, email alerts for high resource usage.
+-   Railway PostgreSQL production: enable automated backups, 30-day backup retention, email alerts for high resource usage. Firebase: enable App Check for production.
 
 -   5-day parallel run: IMIS runs alongside existing tracking process. Compare totals daily. Sign-off on Day 5 confirms zero variance.
 
@@ -743,7 +743,7 @@ Sprint 12 key tasks
 
 -   Training Session 3: Finance Officer (2 hours, reports and reconciliation focus)
 
--   Training Session 4: System Administrator (6 hours, IIS, Railway, Supabase, n8n dashboard)
+-   Training Session 4: System Administrator (6 hours, Railway, Firebase Console, n8n dashboard)
 
 -   Training Session 5: Train-the-Trainer (4 hours, designated power users)
 
@@ -776,15 +776,15 @@ Sprint 12 key tasks
 
   Government contract (RA 9184). Data privacy (RA 10173).
 
-  Stack: Next.js 14 App Router (Vercel) + Supabase PostgreSQL + n8n on Railway + Node.js 20 LTS
+  Stack: Next.js (App Router) on Railway + Firebase Auth + Railway PostgreSQL (Drizzle ORM) + n8n on Railway + Node.js 20 LTS
 
   Security (non-negotiable):
 
   - In transit: TLS 1.3 (Railway + Vercel enforce automatically)
 
-  - At rest: AES-256 (Supabase default)
+  - At rest: AES-256 (Railway PostgreSQL + Firebase Storage, provider default)
 
-  - Auth: Supabase Auth, JWT, 8-hour expiry
+  - Auth: Firebase Auth, JWT ID token (1-hour expiry, auto-refreshed by Firebase SDK)
 
   - Authorization: RLS on EVERY table. No exceptions.
 
@@ -838,11 +838,11 @@ E1-T1: Project scaffold
 
   Create .env.local.example with all variable names. Add next.config.ts with CSP headers
 
-  and X-Frame-Options. Create two Supabase client files: lib/supabase/client.ts (browser)
+  and X-Frame-Options. Auth client files: lib/firebase/client.ts (browser Firebase SDK)
 
-  and lib/supabase/server.ts (server with service_role). Ensure service_role is never
+  and lib/auth/firebase-admin.ts (server Firebase Admin SDK). Ensure FIREBASE_PRIVATE_KEY
 
-  imported in any client component.
+  is never imported in any client component.
   -----------------------------------------------------------------------------------------
 
 E1-T2: Full database schema - all 15 tables
@@ -850,7 +850,7 @@ E1-T2: Full database schema - all 15 tables
   ------------------------------------------------------------------------------------------
   CLAUDE CODE PROMPT
 
-  Generate the complete SQL migration for IMIS: supabase/migrations/001_initial_schema.sql
+  Generate the complete SQL migration for IMIS: drizzle/migrations/0001_initial_schema.sql
 
   Tables: profiles, category_codes, items, item_attributes, inventory_stock,
 
@@ -888,9 +888,7 @@ E1-T3: RLS policies and withAuth middleware
 
   RETURNS TEXT AS $$
 
-  SELECT COALESCE(auth.jwt() ->> 'role',
-
-  (SELECT role FROM public.profiles WHERE id = auth.uid()))
+  SELECT COALESCE(current_setting('app.user_role', TRUE), NULL)
 
   $$ LANGUAGE sql SECURITY DEFINER STABLE;
 
@@ -898,7 +896,7 @@ E1-T3: RLS policies and withAuth middleware
 
   1. Extracts Bearer token from Authorization header
 
-  2. Validates with Supabase server client
+  2. Validates with Firebase Admin SDK (verifyIdToken)
 
   3. Returns 401 if missing or invalid
 
@@ -1040,7 +1038,7 @@ E3-T1: Atomic stock movement RPC
   ------------------------------------------------------------------------------
   CLAUDE CODE PROMPT
 
-  Create a Supabase RPC function process_stock_movement() in plpgsql.
+  Create a PostgreSQL RPC function process_stock_movement() in plpgsql (deployed via drizzle/migrations/0005_process_stock_movement.sql).
 
   Parameters: item_id, movement_type, quantity, reference_no, member_id,
 
@@ -1090,7 +1088,7 @@ E4-T1: MIMS n8n Workflow A
 
   1. Cron trigger: */15 * * * *
 
-  2. Supabase HTTP: SELECT MAX(synced_at) FROM members
+  2. Railway DB: SELECT MAX(synced_at) FROM members
 
   3. HTTP Request: GET {MIMS_API_URL}/api/members?since={{lastSync}}
 
@@ -1098,15 +1096,15 @@ E4-T1: MIMS n8n Workflow A
 
   4. IF: response.success === true AND data.length > 0
 
-  5. Supabase upsert: POST to members table, conflict on mims_member_id
+  5. Railway DB upsert: INSERT INTO members ... ON CONFLICT (mims_member_id) DO UPDATE
 
   Map: mims_member_id, full_name, membership_type, status, synced_at=NOW()
 
-  6. Supabase insert: integration_log with source_system=MIMS, status=success
+  6. Railway DB insert: integration_log with source_system=MIMS, status=success
 
   Error branch from any node:
 
-  - Supabase insert: integration_log with status=error, error_msg (no API key in msg)
+  - Railway DB insert: integration_log with status=error, error_msg (no API key in msg)
 
   - HTTP: POST to Resend API to email system_admin users
 
@@ -1234,7 +1232,7 @@ E5-T1: Report generation with signed URL downloads
 
   - Generate with pdf-lib server-side
 
-  - Upload to Supabase Storage PRIVATE bucket (not public)
+  - Upload to Firebase Storage PRIVATE bucket (not public)
 
   - Create signed URL with 15-minute expiry
 
@@ -1242,7 +1240,7 @@ E5-T1: Report generation with signed URL downloads
 
   - Return only the signed URL (never the file directly)
 
-  Create all 12 report query functions with proper RLS-aware Supabase calls.
+  Create all 12 report query functions with proper RLS-aware Drizzle/PostgreSQL calls (using withRole() wrapper for session variable enforcement).
   -----------------------------------------------------------------------------------------
 
 +----------+--------------------------------------------+--------------+
@@ -1512,7 +1510,7 @@ Because EBS2000 and CAS2000 are legacy on-premises systems, vendor API access ta
 
   Privacy Impact Assessment (DPIA)       Co-author with client DPO. Cover all MIMS data flows and member personal data.                         S11
 
-  Data Processing Agreement              Execute DPA with Supabase, Railway, Vercel, Resend                                                     Before S1
+  Data Processing Agreement              Execute DPA with Firebase (Google Cloud), Railway, Vercel, Resend                                     Before S1
 
   Data minimisation                      MIMS sync caches only: mims_member_id, full_name, membership_type, status. No other personal fields.   S5
 
@@ -1520,9 +1518,9 @@ Because EBS2000 and CAS2000 are legacy on-premises systems, vendor API access ta
 
   Access control                         RBAC: each role can only access data their function requires                                           S1
 
-  Encryption in transit                  TLS 1.3 on Railway, Vercel, Supabase. IIS forces HTTPS redirect.                                       S1, S12
+  Encryption in transit                  TLS 1.3 on Railway, Firebase. Railway enforces HTTPS on all services automatically.                   S1, S12
 
-  Encryption at rest                     AES-256 on Supabase DB and Storage (default). Railway infrastructure encrypted at rest by provider.    S1, S12
+  Encryption at rest                     AES-256 on Railway PostgreSQL and Firebase Storage (provider default). Railway infrastructure encrypted at rest.    S1, S12
 
   Audit logging                          All data access and API calls logged to immutable audit_log and integration_log                        S1
 
@@ -1658,7 +1656,7 @@ Billing milestones (standard for government contracts):
 
   S2: Barcode + Catalog   2 weeks     3-4 days                       7-8 days                       bwip-js, pdf-lib, 13 Zod schemas, dynamic category forms
 
-  S3: Movements           2 weeks     4-5 days                       8-10 days                      Supabase RPC, lifecycle state machine, movement engine
+  S3: Movements           2 weeks     4-5 days                       8-10 days                      PostgreSQL RPC (Drizzle migration), lifecycle state machine, movement engine
 
   S4: Alerts + MVP        2 weeks     3-4 days                       7-8 days                       n8n workflow JSON, cron config, dashboard components
 
@@ -1676,7 +1674,7 @@ Billing milestones (standard for government contracts):
 
   S11: UAT + Docs         2 weeks     2 weeks                        3-4 weeks                      Documentation generation, DPIA template (human review required)
 
-  S12: Deploy + Train     2 weeks     2 weeks                        3-4 weeks                      Dockerfile, railway.json per service, Railway env vars, Supabase prod setup
+  S12: Deploy + Train     2 weeks     2 weeks                        3-4 weeks                      Dockerfile, railway.json per service, Railway env vars, Firebase project production setup
 
   TOTAL                   24 weeks    14-16 weeks                    22-26 weeks                    ~40% reduction on coding sprints S1-S10
   -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -1744,7 +1742,7 @@ Billing milestones (standard for government contracts):
   ----- ---------------------------------------------------------------------------------------------------
   [ ]   SSL Labs test on production URL returns Grade A or higher
 
-  [ ]   RLS verified: unauthenticated Supabase client returns 0 rows on all 15 tables
+  [ ]   RLS verified: unauthenticated request (no Authorization header) returns 0 rows on all 15 tables (withAuth + RLS policies)
 
   [ ]   No UPDATE or DELETE possible on audit_log or integration_log (test with direct SQL attempt)
 
@@ -1828,15 +1826,15 @@ Complete every item below before writing a single line of code. Several of these
 13.3 Technical setup
 
   ----- --------------------------------------------------------------------------------------
-  [ ]   Supabase project created and connection string copied to .env.local
+  [ ]   Railway PostgreSQL addon provisioned and DATABASE_URL copied to .env.local
 
-  [ ]   Vercel account connected to GitHub repository
+  [ ]   Firebase project created, Admin SDK service account key downloaded, env vars set
 
   [ ]   Railway account created and CLI installed (npm install -g @railway/cli)
 
   [ ]   Domain or subdomain allocated for the IMIS (e.g. imis.samelco.ph)
 
-  [ ]   Data Processing Agreements signed with Supabase, Railway, Vercel, and Resend
+  [ ]   Data Processing Agreements signed with Firebase (Google), Railway, Vercel, and Resend
 
   [ ]   Execute: railway login && railway init --name imis-n8n
 
