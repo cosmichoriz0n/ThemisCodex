@@ -9,11 +9,13 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
+    "@types/bwip-js": "^3.2.3",
     "bwip-js": "^4.9.0",
     "drizzle-kit": "^0.31.10",
     "drizzle-orm": "^0.45.2",
     "firebase": "^12.11.0",
     "firebase-admin": "^13.7.0",
+    "html5-qrcode": "^2.3.8",
     "next": "16.2.2",
     "pdf-lib": "^1.17.1",
     "postgres": "^3.4.9",
@@ -26,7 +28,6 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/bwip-js": "^3.2.3",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
