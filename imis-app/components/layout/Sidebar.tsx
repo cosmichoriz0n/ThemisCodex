@@ -13,6 +13,8 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", roles: ["inventory_staff", "inventory_manager", "finance_officer", "system_admin", "auditor"] },
   { href: "/inventory", label: "Inventory", roles: ["inventory_staff", "inventory_manager", "finance_officer", "system_admin", "auditor"] },
   { href: "/movements/new", label: "New Movement", roles: ["inventory_staff", "inventory_manager", "system_admin"] },
+  { href: "/movements", label: "Movement History", roles: ["inventory_staff", "inventory_manager", "finance_officer", "system_admin", "auditor"] },
+  { href: "/physical-count", label: "Physical Count", roles: ["inventory_staff", "inventory_manager", "system_admin"] },
   { href: "/items", label: "Item Catalog", roles: ["inventory_manager", "system_admin"] },
   { href: "/members", label: "Members", roles: ["inventory_staff", "inventory_manager", "finance_officer", "system_admin"] },
   { href: "/transactions", label: "Transactions", roles: ["inventory_staff", "inventory_manager", "finance_officer", "system_admin", "auditor"] },
@@ -36,7 +38,7 @@ export default function Sidebar({ role }: { role: Role }) {
     pathname === href || (href !== "/dashboard" && pathname.startsWith(href));
 
   return (
-    <aside className="w-56 flex-shrink-0 bg-white border-r border-gray-200 flex flex-col">
+    <aside className="w-56 shrink-0 bg-white border-r border-gray-200 flex flex-col">
       <div className="px-4 py-4 border-b border-gray-100">
         <span className="text-lg font-bold text-blue-700">IMIS</span>
       </div>

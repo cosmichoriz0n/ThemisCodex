@@ -107,14 +107,22 @@ export default async function ItemDetailPage({
           <h1 className="text-2xl font-bold text-gray-900">{item.itemName}</h1>
           <p className="text-sm text-gray-500">{catName}</p>
         </div>
-        {canEdit && (
+        <div className="flex gap-2">
           <Link
-            href={`/items/${id}/edit`}
+            href={`/movements/${id}`}
             className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors whitespace-nowrap"
           >
-            Edit Item
+            Movement History
           </Link>
-        )}
+          {canEdit && (
+            <Link
+              href={`/items/${id}/edit`}
+              className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors whitespace-nowrap"
+            >
+              Edit Item
+            </Link>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
