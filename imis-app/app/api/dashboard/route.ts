@@ -1,6 +1,6 @@
 import "server-only";
 import { NextRequest, NextResponse } from "next/server";
-import { eq, sql, desc, and } from "drizzle-orm";
+import { eq, sql, desc } from "drizzle-orm";
 import { withAuth } from "@/lib/auth/withAuth";
 import { withRole } from "@/lib/db/with-role";
 import { ALL_ROLES } from "@/lib/auth/permissions";

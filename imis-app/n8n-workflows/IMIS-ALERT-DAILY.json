@@ -57,11 +57,13 @@
     {
       "parameters": {
         "conditions": {
-          "options": {
-            "leftValue": "={{ $json.data.alerts_created }}",
-            "operation": "larger",
-            "rightValue": 0
-          }
+          "number": [
+            {
+              "value1": "={{ $json.data.alerts_created }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
         }
       },
       "id": "if-alerts-created",

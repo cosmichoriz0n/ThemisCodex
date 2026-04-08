@@ -1,6 +1,6 @@
 import "server-only";
 import { NextRequest, NextResponse } from "next/server";
-import { eq, and, inArray, notExists, sql } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { items } from "@/lib/db/schema/items";
 import { itemAttributes } from "@/lib/db/schema/item-attributes";

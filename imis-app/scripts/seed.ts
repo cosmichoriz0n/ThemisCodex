@@ -14,7 +14,6 @@ import { eq, count } from "drizzle-orm";
 import * as schema from "../lib/db/schema";
 
 const SEED_USER_ID = "seed-script";
-const COOPERATIVE_ID = "SAMELCO";
 
 const client = postgres(process.env.DATABASE_URL!, { max: 1 });
 const db = drizzle(client, { schema });

@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Resend } from "resend";
 import { db } from "@/lib/db";
 import { profiles } from "@/lib/db/schema/profiles";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 function verifySecret(req: NextRequest): boolean {
   const secret = process.env.N8N_WEBHOOK_SECRET;
@@ -44,14 +44,15 @@ export async function POST(req: NextRequest) {
   }
 
   // Fetch all active inventory_manager emails
-  const managers = await db
+  const activeManagers = await db
     .select({ email: profiles.email, fullName: profiles.fullName })
     .from(profiles)
     .where(
-      inArray(profiles.role, ["inventory_manager", "system_admin"])
+      and(
+        inArray(profiles.role, ["inventory_manager", "system_admin"]),
+        eq(profiles.isActive, true)
+      )
     );
-
-  const activeManagers = managers.filter((m) => m.email);
   if (activeManagers.length === 0) {
     return NextResponse.json({ data: { sent: 0, reason: "no_managers" } });
   }
