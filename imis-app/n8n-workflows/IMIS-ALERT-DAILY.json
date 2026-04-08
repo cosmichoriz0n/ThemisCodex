@@ -1,0 +1,194 @@
+{
+  "name": "IMIS-ALERT-DAILY",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 23 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Cron: 07:00 PHT (23:00 UTC)",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "notes": "Runs at 07:00 PHT (UTC+8) = 23:00 UTC previous day"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/alerts/check",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-imis-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "triggered_by",
+              "value": "IMIS-ALERT-DAILY"
+            }
+          ]
+        }
+      },
+      "id": "call-alert-check",
+      "name": "POST /api/alerts/check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "={{ $json.data.alerts_created }}",
+            "operation": "larger",
+            "rightValue": 0
+          }
+        }
+      },
+      "id": "if-alerts-created",
+      "name": "Any new alerts?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/alerts/notify",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-imis-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($node['POST /api/alerts/check'].json.data) }}"
+      },
+      "id": "send-email-notify",
+      "name": "POST /api/alerts/notify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1000, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/integration-log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-imis-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"source_system\":\"INTERNAL\",\"operation\":\"IMIS-ALERT-DAILY\",\"status\":\"success\",\"payload\":{\"alerts_created\":{{ $node['POST /api/alerts/check'].json.data.alerts_created }},\"ran_at\":\"{{ new Date().toISOString() }}\"}}"
+      },
+      "id": "log-success",
+      "name": "Log success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1000, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/integration-log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-imis-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"source_system\":\"INTERNAL\",\"operation\":\"IMIS-ALERT-DAILY\",\"status\":\"failure\",\"error_msg\":\"{{ $json.message }}\"}"
+      },
+      "id": "log-error",
+      "name": "Log error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1000, 600]
+    }
+  ],
+  "connections": {
+    "Cron: 07:00 PHT (23:00 UTC)": {
+      "main": [
+        [{ "node": "POST /api/alerts/check", "type": "main", "index": 0 }]
+      ]
+    },
+    "POST /api/alerts/check": {
+      "main": [
+        [{ "node": "Any new alerts?", "type": "main", "index": 0 }]
+      ],
+      "error": [
+        [{ "node": "Log error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Any new alerts?": {
+      "main": [
+        [{ "node": "POST /api/alerts/notify", "type": "main", "index": 0 }],
+        [{ "node": "Log success", "type": "main", "index": 0 }]
+      ]
+    },
+    "POST /api/alerts/notify": {
+      "main": [
+        [{ "node": "Log success", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": ["IMIS", "alerts", "daily"],
+  "notes": "IMIS-ALERT-DAILY: Runs at 07:00 PHT daily. Calls /api/alerts/check which scans item_attributes for PMS due (14d), Medical expiry (90d), IT/NTC/calibration expiry (30d). Creates reorder_alerts rows. Then calls /api/alerts/notify to send Resend emails. Logs to integration_log. Environment variables required: IMIS_APP_URL, N8N_WEBHOOK_SECRET."
+}
