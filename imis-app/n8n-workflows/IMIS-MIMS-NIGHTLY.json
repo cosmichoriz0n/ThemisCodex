@@ -1,0 +1,132 @@
+{
+  "name": "IMIS-MIMS-NIGHTLY",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 15 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Cron: 23:30 PHT (15:30 UTC)",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "notes": "Runs at 23:30 PHT (UTC+8) = 15:30 UTC. Full refresh — fetches all MIMS members regardless of updated_at."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/members/sync",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-imis-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"triggered_by\":\"IMIS-MIMS-NIGHTLY\",\"mode\":\"full\"}"
+      },
+      "id": "call-members-sync",
+      "name": "POST /api/members/sync (full)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/integration-log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-imis-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"source_system\":\"MIMS\",\"operation\":\"IMIS-MIMS-NIGHTLY\",\"status\":\"success\",\"payload\":{\"mode\":\"full\",\"synced\":{{ $node['POST /api/members/sync (full)'].json.data.synced }},\"ran_at\":\"{{ new Date().toISOString() }}\"}}"
+      },
+      "id": "log-success",
+      "name": "Log success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [750, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/integration-log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-imis-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"source_system\":\"MIMS\",\"operation\":\"IMIS-MIMS-NIGHTLY\",\"status\":\"failure\",\"error_msg\":\"{{ $json.message ?? $json.error ?? 'Unknown error' }}\"}"
+      },
+      "id": "log-error",
+      "name": "Log error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [750, 450]
+    }
+  ],
+  "connections": {
+    "Cron: 23:30 PHT (15:30 UTC)": {
+      "main": [
+        [{ "node": "POST /api/members/sync (full)", "type": "main", "index": 0 }]
+      ]
+    },
+    "POST /api/members/sync (full)": {
+      "main": [
+        [{ "node": "Log success", "type": "main", "index": 0 }]
+      ],
+      "error": [
+        [{ "node": "Log error", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": ["IMIS", "MIMS", "sync", "nightly"],
+  "notes": "IMIS-MIMS-NIGHTLY: Runs at 23:30 PHT (15:30 UTC) as a safety net full refresh. Calls /api/members/sync in full mode — no ?since filter, fetches and upserts all members. Ensures local cache is never more than 24h stale even if delta syncs fail. Environment variables required: IMIS_APP_URL, N8N_WEBHOOK_SECRET."
+}

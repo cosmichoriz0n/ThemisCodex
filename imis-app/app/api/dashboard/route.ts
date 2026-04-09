@@ -1,6 +1,6 @@
 import "server-only";
 import { NextRequest, NextResponse } from "next/server";
-import { eq, sql, desc } from "drizzle-orm";
+import { and, eq, sql, desc } from "drizzle-orm";
 import { withAuth } from "@/lib/auth/withAuth";
 import { withRole } from "@/lib/db/with-role";
 import { ALL_ROLES } from "@/lib/auth/permissions";
@@ -64,7 +64,12 @@ export const GET = withAuth(async (req: NextRequest, { user, role }) => {
 
     // 5. Integration health — last sync time per source system
     const integrationSystems = ["MIMS", "EBS2000", "CAS2000"] as const;
-    const integrationHealth: Record<string, { lastSync: string | null; lastStatus: string | null }> = {};
+    const integrationHealth: Record<string, {
+      lastSync:     string | null;
+      lastStatus:   string | null;
+      lastErrorMsg: string | null;
+      successRate7d: number | null;
+    }> = {};
 
     for (const system of integrationSystems) {
       const [latest] = await tx
@@ -77,9 +82,49 @@ export const GET = withAuth(async (req: NextRequest, { user, role }) => {
         .orderBy(desc(integrationLog.createdAt))
         .limit(1);
 
+      // Last error message (only for MIMS — the live integration in Sprint 5)
+      let lastErrorMsg: string | null = null;
+      let successRate7d: number | null = null;
+
+      if (system === "MIMS") {
+        const [lastError] = await tx
+          .select({ errorMsg: integrationLog.errorMsg })
+          .from(integrationLog)
+          .where(
+            and(
+              eq(integrationLog.sourceSystem, "MIMS"),
+              eq(integrationLog.status, "failure")
+            )
+          )
+          .orderBy(desc(integrationLog.createdAt))
+          .limit(1);
+
+        lastErrorMsg = lastError?.errorMsg ?? null;
+
+        // 7-day rolling success rate
+        const [rates] = await tx
+          .select({
+            total:    sql<number>`COUNT(*)::int`,
+            successes: sql<number>`COUNT(*) FILTER (WHERE ${integrationLog.status} = 'success')::int`,
+          })
+          .from(integrationLog)
+          .where(
+            and(
+              eq(integrationLog.sourceSystem, "MIMS"),
+              sql`${integrationLog.createdAt} >= now() - interval '7 days'`
+            )
+          );
+
+        if (rates && rates.total > 0) {
+          successRate7d = Math.round((rates.successes / rates.total) * 100);
+        }
+      }
+
       integrationHealth[system] = {
-        lastSync:   latest?.createdAt?.toISOString() ?? null,
-        lastStatus: latest?.status ?? null,
+        lastSync:      latest?.createdAt?.toISOString() ?? null,
+        lastStatus:    latest?.status ?? null,
+        lastErrorMsg,
+        successRate7d,
       };
     }
 

@@ -1,0 +1,185 @@
+{
+  "name": "IMIS-MIMS-001",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/15 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Cron: every 15 min",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "notes": "Runs every 15 minutes. Pulls members updated since last sync (delta mode)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/members/sync",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-imis-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"triggered_by\":\"IMIS-MIMS-001\",\"mode\":\"delta\"}"
+      },
+      "id": "call-members-sync",
+      "name": "POST /api/members/sync (delta)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.data.synced }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "if-synced",
+      "name": "Members synced?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/integration-log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-imis-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"source_system\":\"MIMS\",\"operation\":\"IMIS-MIMS-001\",\"status\":\"success\",\"payload\":{\"mode\":\"delta\",\"synced\":{{ $node['POST /api/members/sync (delta)'].json.data.synced }},\"ran_at\":\"{{ new Date().toISOString() }}\"}}"
+      },
+      "id": "log-success",
+      "name": "Log success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1000, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/integration-log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-imis-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"source_system\":\"MIMS\",\"operation\":\"IMIS-MIMS-001\",\"status\":\"success\",\"payload\":{\"mode\":\"delta\",\"synced\":0,\"ran_at\":\"{{ new Date().toISOString() }}\"}}"
+      },
+      "id": "log-no-changes",
+      "name": "Log no changes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1000, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/integration-log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-imis-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"source_system\":\"MIMS\",\"operation\":\"IMIS-MIMS-001\",\"status\":\"failure\",\"error_msg\":\"{{ $json.message ?? $json.error ?? 'Unknown error' }}\"}"
+      },
+      "id": "log-error",
+      "name": "Log error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [750, 550]
+    }
+  ],
+  "connections": {
+    "Cron: every 15 min": {
+      "main": [
+        [{ "node": "POST /api/members/sync (delta)", "type": "main", "index": 0 }]
+      ]
+    },
+    "POST /api/members/sync (delta)": {
+      "main": [
+        [{ "node": "Members synced?", "type": "main", "index": 0 }]
+      ],
+      "error": [
+        [{ "node": "Log error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Members synced?": {
+      "main": [
+        [{ "node": "Log success", "type": "main", "index": 0 }],
+        [{ "node": "Log no changes", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": ["IMIS", "MIMS", "sync", "delta"],
+  "notes": "IMIS-MIMS-001: Runs every 15 minutes. Calls /api/members/sync in delta mode — fetches only members updated since the last sync timestamp. Upserts to local members table. Logs success/failure to integration_log. The sync endpoint never logs the MIMS API key. Environment variables required: IMIS_APP_URL, N8N_WEBHOOK_SECRET."
+}

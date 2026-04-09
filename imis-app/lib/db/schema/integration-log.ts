@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, jsonb, timestamp, index } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, integer, jsonb, timestamp, index } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 export const integrationLog = pgTable(
@@ -13,7 +13,7 @@ export const integrationLog = pgTable(
     payload: jsonb("payload"),
     responseBody: jsonb("response_body"),
     errorMsg: text("error_msg"),
-    retryCount: text("retry_count").default("0"),
+    retryCount: integer("retry_count").default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
   },
   (table) => [

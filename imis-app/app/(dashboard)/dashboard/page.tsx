@@ -102,8 +102,10 @@ interface RecentMovement {
 }
 
 interface IntegrationHealth {
-  lastSync: string | null;
-  lastStatus: string | null;
+  lastSync:      string | null;
+  lastStatus:    string | null;
+  lastErrorMsg:  string | null;
+  successRate7d: number | null;
 }
 
 interface DashboardData {
@@ -163,15 +165,37 @@ export default async function DashboardPage() {
         {/* Integration health compact summary */}
         <div className="bg-white rounded-lg border border-gray-200 p-4 col-span-2">
           <p className="text-xs text-gray-500 mb-2">Integration Health</p>
-          <div className="space-y-1">
+          <div className="space-y-2">
             {(["MIMS", "EBS2000", "CAS2000"] as const).map((sys) => {
               const h = data?.integrationHealth[sys];
+              const isMims = sys === "MIMS";
+              const rate = h?.successRate7d ?? null;
+              const ratePill =
+                rate === null ? null :
+                rate >= 90 ? "bg-green-100 text-green-700" :
+                rate >= 70 ? "bg-amber-100 text-amber-700" :
+                             "bg-red-100 text-red-700";
+
               return (
-                <div key={sys} className="flex items-center justify-between text-xs">
-                  <span className="font-medium text-gray-700">{sys}</span>
-                  <span className={`px-2 py-0.5 rounded font-medium ${healthBadge(h?.lastStatus ?? null)}`}>
-                    {healthLabel(h?.lastStatus ?? null, h?.lastSync ?? null)}
-                  </span>
+                <div key={sys}>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-medium text-gray-700">{sys}</span>
+                    <div className="flex items-center gap-1.5">
+                      {isMims && rate !== null && (
+                        <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${ratePill}`}>
+                          {rate}% 7d
+                        </span>
+                      )}
+                      <span className={`px-2 py-0.5 rounded font-medium ${healthBadge(h?.lastStatus ?? null)}`}>
+                        {healthLabel(h?.lastStatus ?? null, h?.lastSync ?? null)}
+                      </span>
+                    </div>
+                  </div>
+                  {isMims && h?.lastErrorMsg && h.lastStatus === "failure" && (
+                    <p className="text-xs text-amber-700 mt-0.5 truncate" title={h.lastErrorMsg}>
+                      {h.lastErrorMsg.length > 80 ? `${h.lastErrorMsg.slice(0, 80)}…` : h.lastErrorMsg}
+                    </p>
+                  )}
                 </div>
               );
             })}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import ScannerInput, { type ScannerInputHandle } from "@/components/barcode/ScannerInput";
 
@@ -23,6 +23,13 @@ interface ItemSearchResult {
   location:        string | null;
   lifecycleStatus: string;
   qtyOnHand:       number | null;
+}
+
+interface MemberSearchResult {
+  mimsMemberId:   string;
+  fullName:       string;
+  membershipType: string | null;
+  status:         string;
 }
 
 interface FormState {
@@ -77,6 +84,13 @@ export default function NewMovementPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError]           = useState<string | null>(null);
   const [success, setSuccess]       = useState<string | null>(null);
+
+  // Member typeahead state
+  const [memberQuery, setMemberQuery]       = useState("");
+  const [memberResults, setMemberResults]   = useState<MemberSearchResult[]>([]);
+  const [memberSearching, setMemberSearching] = useState(false);
+  const [selectedMember, setSelectedMember] = useState<MemberSearchResult | null>(null);
+  const memberDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const set = (key: keyof FormState, value: unknown) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -133,6 +147,47 @@ export default function NewMovementPage() {
     setSearchQuery(item.itemName);
     setSearchResults([]);
   };
+
+  const searchMembers = useCallback((q: string) => {
+    if (memberDebounceRef.current) clearTimeout(memberDebounceRef.current);
+    if (!q || q.length < 2) { setMemberResults([]); return; }
+    memberDebounceRef.current = setTimeout(async () => {
+      setMemberSearching(true);
+      try {
+        const res = await fetch(
+          `/api/members/search?q=${encodeURIComponent(q)}&limit=10`,
+          { headers: { Authorization: `Bearer ${getSessionToken()}` } }
+        );
+        const json = await res.json();
+        setMemberResults((json.data ?? []) as MemberSearchResult[]);
+      } finally {
+        setMemberSearching(false);
+      }
+    }, 300);
+  }, []);
+
+  const selectMember = (m: MemberSearchResult) => {
+    setSelectedMember(m);
+    setForm((f) => ({ ...f, memberId: m.mimsMemberId }));
+    setMemberQuery(m.fullName);
+    setMemberResults([]);
+  };
+
+  const clearMember = () => {
+    if (memberDebounceRef.current) clearTimeout(memberDebounceRef.current);
+    setSelectedMember(null);
+    setForm((f) => ({ ...f, memberId: "" }));
+    setMemberQuery("");
+    setMemberResults([]);
+  };
+
+  // Clear member selection when switching away from "issue"
+  useEffect(() => {
+    if (form.movementType !== "issue") {
+      clearMember();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.movementType]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -360,28 +415,78 @@ export default function NewMovementPage() {
           {showMemberId && (
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">
-                Member / Recipient ID
+                Member / Recipient
               </label>
-              <input
-                type="text"
-                value={form.memberId}
-                onChange={(e) => set("memberId", e.target.value)}
-                placeholder="MIMS member ID or employee ID"
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+              {selectedMember ? (
+                <div className="flex items-center gap-2 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-sm">
+                  <span className="font-mono text-xs text-blue-700">{selectedMember.mimsMemberId}</span>
+                  <span className="font-medium text-blue-800">{selectedMember.fullName}</span>
+                  {selectedMember.membershipType && (
+                    <span className="text-blue-500 text-xs">({selectedMember.membershipType})</span>
+                  )}
+                  <span className={`text-xs ml-1 ${selectedMember.status === "active" ? "text-green-600" : "text-amber-600"}`}>
+                    [{selectedMember.status}]
+                  </span>
+                  <button
+                    type="button"
+                    onClick={clearMember}
+                    className="ml-auto text-xs text-blue-400 hover:text-blue-600"
+                  >
+                    Change
+                  </button>
+                </div>
+              ) : (
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={memberQuery}
+                    onChange={(e) => {
+                      setMemberQuery(e.target.value);
+                      searchMembers(e.target.value);
+                    }}
+                    placeholder="Search by name or member ID…"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  {memberSearching && (
+                    <span className="absolute right-3 top-2 text-xs text-gray-400">Searching…</span>
+                  )}
+                  {memberResults.length > 0 && (
+                    <ul className="absolute z-10 w-full bg-white border border-gray-200 rounded-lg shadow-md mt-1 divide-y divide-gray-100 max-h-48 overflow-y-auto">
+                      {memberResults.map((m) => (
+                        <li key={m.mimsMemberId}>
+                          <button
+                            type="button"
+                            onClick={() => selectMember(m)}
+                            className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50"
+                          >
+                            <span className="font-mono text-xs text-blue-700 mr-2">{m.mimsMemberId}</span>
+                            <span className="font-medium text-gray-800">{m.fullName}</span>
+                            {m.membershipType && (
+                              <span className="ml-2 text-gray-400 text-xs">({m.membershipType})</span>
+                            )}
+                            <span className={`ml-2 text-xs ${m.status === "active" ? "text-green-600" : "text-amber-600"}`}>
+                              {m.status}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">
-                Reference No.
+                {mt === "issue" ? "MIMS Service Request No." : "Reference No."}
               </label>
               <input
                 type="text"
                 value={form.referenceNo}
                 onChange={(e) => set("referenceNo", e.target.value)}
-                placeholder="PO / RIS / DR no."
+                placeholder={mt === "issue" ? "MIMS SR no." : "PO / RIS / DR no."}
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
