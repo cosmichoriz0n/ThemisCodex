@@ -1,0 +1,507 @@
+{
+  "name": "IMIS-CAS-001",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "imis-cas-001",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook: IMIS stock-issue",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 350],
+      "notes": "Receives HMAC-signed webhook from IMIS when a stock movement requires a NEA COA journal entry."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"status\":\"received\",\"transaction_id\":\"{{ $json.body.transaction_id }}\"}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-to-webhook",
+      "name": "Respond: 200 received",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [500, 200],
+      "notes": "Immediately acks the webhook. Workflow continues processing asynchronously."
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst secret = $env.N8N_WEBHOOK_SECRET;\nconst input = $input.first().json;\nconst body = input.body ?? input;\nconst headers = input.headers ?? {};\nconst signature = headers['x-imis-signature'] || headers['X-IMIS-Signature'] || '';\n\n// Verify HMAC-SHA256\nconst expected = crypto\n  .createHmac('sha256', secret)\n  .update(JSON.stringify(body))\n  .digest('hex');\nconst isValid = signature === expected;\n\n// NEA COA mapping: movement_type -> journal entries\nconst COA_MAP = {\n  issue:    { journal_type: 'COGS',       debit: '5110', credit: '1540' },\n  adjust:   { journal_type: 'ADJUSTMENT', debit: '5120', credit: '1540' },\n  dispose:  { journal_type: 'DISPOSAL',   debit: '5130', credit: '1920' },\n  receive:  { journal_type: 'STOCK_IN',   debit: '1540', credit: '2110' },\n  return:   { journal_type: 'REVERSAL',   debit: '1540', credit: '5110' },\n};\n\nconst movementType = body.movement_type;\nconst coa = COA_MAP[movementType];\nconst amount = parseFloat(body.total_amount ?? '0');\n\nconst entries = coa ? [\n  { account_code: coa.debit,  type: 'Debit',  amount },\n  { account_code: coa.credit, type: 'Credit', amount },\n] : [];\n\nconst debitSum  = entries.filter(e => e.type === 'Debit').reduce((s, e) => s + e.amount, 0);\nconst creditSum = entries.filter(e => e.type === 'Credit').reduce((s, e) => s + e.amount, 0);\nconst balanced  = Math.abs(debitSum - creditSum) < 0.0001;\n\nreturn [{\n  json: {\n    transaction_id:  body.transaction_id,\n    movement_type:   movementType,\n    movement_id:     body.movement_id,\n    total_amount:    amount,\n    member_id:       body.member_id,\n    description:     body.description ?? `Stock movement - ${movementType}`,\n    reference_no:    body.reference_no,\n    journal_type:    coa?.journal_type ?? null,\n    entries,\n    balanced,\n    needs_journal:   !!coa && amount > 0,\n    _hmac_valid:     isValid,\n  }\n}];"
+      },
+      "id": "verify-hmac-map-journal",
+      "name": "Verify HMAC + Map Journal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 400],
+      "notes": "Verifies X-IMIS-Signature. Maps movement_type to NEA COA entries. Validates debit == credit balance."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json._hmac_valid }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-hmac-valid",
+      "name": "HMAC valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [750, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/integration-log",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-imis-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"source_system\":\"CAS2000\",\"operation\":\"IMIS-CAS-001\",\"status\":\"failure\",\"error_msg\":\"INVALID_HMAC_SIGNATURE — possible replay or misconfigured secret\",\"payload\":{\"transaction_id\":\"{{ $json.transaction_id }}\"}}"
+      },
+      "id": "log-security-violation",
+      "name": "Log: security_violation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1000, 280],
+      "notes": "HMAC invalid — log and stop. Do not forward to CAS2000."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.needs_journal }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-needs-journal",
+      "name": "Needs journal?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1000, 520],
+      "notes": "Skips transfer movements and zero-amount transactions — no CAS2000 posting required."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.balanced }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-balanced",
+      "name": "Journal balanced?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1250, 520],
+      "notes": "Hard stop if debits != credits. This must never happen with correct COA mapping."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/integration-log",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-imis-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"source_system\":\"CAS2000\",\"operation\":\"IMIS-CAS-001\",\"status\":\"failure\",\"error_msg\":\"JOURNAL_UNBALANCED — debits do not equal credits\",\"payload\":{\"transaction_id\":\"{{ $json.transaction_id }}\",\"entries\":{{ JSON.stringify($json.entries) }}}}"
+      },
+      "id": "log-unbalanced",
+      "name": "Log: unbalanced_journal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1500, 400],
+      "notes": "Unbalanced journal — log and stop. Must alert system_admin."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CAS2000_BASE_URL }}/api/journals",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "X-Api-Key",    "value": "={{ $env.CAS2000_API_KEY }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"journal_type\":\"{{ $json.journal_type }}\",\"description\":\"{{ $json.description }}\",\"entries\":{{ JSON.stringify($json.entries) }}}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "post-cas-journal",
+      "name": "POST CAS2000 /api/journals",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1500, 620],
+      "notes": "First attempt. fullResponse=true to capture statusCode. neverError=true so 4xx/5xx don't throw."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.statusCode }}",
+              "operation": "smallerEqual",
+              "value2": 299
+            }
+          ]
+        }
+      },
+      "id": "if-cas-2xx",
+      "name": "CAS 2xx?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1750, 620]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/transactions/{{ $node['Verify HMAC + Map Journal'].json.transaction_id }}/cas-callback",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-imis-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"cas_journal_ref\":\"{{ $json.body.journal_ref ?? null }}\",\"cas_sync_status\":\"synced\",\"cas_sync_attempts\":1}"
+      },
+      "id": "cas-callback-synced-1",
+      "name": "cas-callback: synced (attempt 1)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [2000, 520]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.statusCode }}",
+              "operation": "largerEqual",
+              "value2": 400
+            },
+            {
+              "value1": "={{ $json.statusCode }}",
+              "operation": "smallerEqual",
+              "value2": 499
+            }
+          ]
+        },
+        "combineOperation": "all"
+      },
+      "id": "if-cas-4xx",
+      "name": "CAS 4xx?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2000, 720]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/transactions/{{ $node['Verify HMAC + Map Journal'].json.transaction_id }}/cas-callback",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-imis-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"cas_sync_status\":\"failed\",\"cas_sync_attempts\":1,\"error_msg\":\"CAS2000_CLIENT_ERROR — status {{ $json.statusCode }}. No retry (4xx is not transient).\"}"
+      },
+      "id": "cas-callback-4xx-fail",
+      "name": "cas-callback: failed (4xx — no retry)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [2250, 620],
+      "notes": "4xx errors are client-side (bad payload) — retrying will not help. Mark failed immediately."
+    },
+    {
+      "parameters": {
+        "amount": 10,
+        "unit": "seconds"
+      },
+      "id": "wait-10s",
+      "name": "Wait 10s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [2250, 840]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CAS2000_BASE_URL }}/api/journals",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "X-Api-Key",    "value": "={{ $env.CAS2000_API_KEY }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"journal_type\":\"{{ $node['Verify HMAC + Map Journal'].json.journal_type }}\",\"description\":\"{{ $node['Verify HMAC + Map Journal'].json.description }}\",\"entries\":{{ JSON.stringify($node['Verify HMAC + Map Journal'].json.entries) }}}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "post-cas-retry-2",
+      "name": "POST CAS2000 retry 2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [2500, 840]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.statusCode }}",
+              "operation": "smallerEqual",
+              "value2": 299
+            }
+          ]
+        }
+      },
+      "id": "if-retry2-2xx",
+      "name": "Retry 2: 2xx?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2750, 840]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/transactions/{{ $node['Verify HMAC + Map Journal'].json.transaction_id }}/cas-callback",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-imis-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"cas_journal_ref\":\"{{ $json.body.journal_ref ?? null }}\",\"cas_sync_status\":\"synced\",\"cas_sync_attempts\":2}"
+      },
+      "id": "cas-callback-synced-2",
+      "name": "cas-callback: synced (attempt 2)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [3000, 740]
+    },
+    {
+      "parameters": {
+        "amount": 30,
+        "unit": "seconds"
+      },
+      "id": "wait-30s",
+      "name": "Wait 30s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [3000, 960]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CAS2000_BASE_URL }}/api/journals",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "X-Api-Key",    "value": "={{ $env.CAS2000_API_KEY }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"journal_type\":\"{{ $node['Verify HMAC + Map Journal'].json.journal_type }}\",\"description\":\"{{ $node['Verify HMAC + Map Journal'].json.description }}\",\"entries\":{{ JSON.stringify($node['Verify HMAC + Map Journal'].json.entries) }}}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "post-cas-retry-3",
+      "name": "POST CAS2000 retry 3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [3250, 960]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.statusCode }}",
+              "operation": "smallerEqual",
+              "value2": 299
+            }
+          ]
+        }
+      },
+      "id": "if-retry3-2xx",
+      "name": "Retry 3: 2xx?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [3500, 960]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/transactions/{{ $node['Verify HMAC + Map Journal'].json.transaction_id }}/cas-callback",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-imis-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"cas_journal_ref\":\"{{ $json.body.journal_ref ?? null }}\",\"cas_sync_status\":\"synced\",\"cas_sync_attempts\":3}"
+      },
+      "id": "cas-callback-synced-3",
+      "name": "cas-callback: synced (attempt 3)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [3750, 860]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/transactions/{{ $node['Verify HMAC + Map Journal'].json.transaction_id }}/cas-callback",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-imis-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"cas_sync_status\":\"failed\",\"cas_sync_attempts\":3,\"error_msg\":\"CAS2000_MAX_RETRIES_EXHAUSTED — 3 attempts failed (10/30/90s backoff). Manual review required.\"}"
+      },
+      "id": "cas-callback-failed-final",
+      "name": "cas-callback: failed (3 retries exhausted)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [3750, 1100],
+      "notes": "All 3 retries failed. Mark transaction CAS sync as failed for manual resolution."
+    }
+  ],
+  "connections": {
+    "Webhook: IMIS stock-issue": {
+      "main": [[{ "node": "Respond: 200 received", "type": "main", "index": 0 }, { "node": "Verify HMAC + Map Journal", "type": "main", "index": 0 }]]
+    },
+    "Verify HMAC + Map Journal": {
+      "main": [[{ "node": "HMAC valid?", "type": "main", "index": 0 }]]
+    },
+    "HMAC valid?": {
+      "main": [
+        [{ "node": "Needs journal?", "type": "main", "index": 0 }],
+        [{ "node": "Log: security_violation", "type": "main", "index": 0 }]
+      ]
+    },
+    "Needs journal?": {
+      "main": [
+        [{ "node": "Journal balanced?", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Journal balanced?": {
+      "main": [
+        [{ "node": "POST CAS2000 /api/journals", "type": "main", "index": 0 }],
+        [{ "node": "Log: unbalanced_journal", "type": "main", "index": 0 }]
+      ]
+    },
+    "POST CAS2000 /api/journals": {
+      "main": [[{ "node": "CAS 2xx?", "type": "main", "index": 0 }]]
+    },
+    "CAS 2xx?": {
+      "main": [
+        [{ "node": "cas-callback: synced (attempt 1)", "type": "main", "index": 0 }],
+        [{ "node": "CAS 4xx?", "type": "main", "index": 0 }]
+      ]
+    },
+    "CAS 4xx?": {
+      "main": [
+        [{ "node": "cas-callback: failed (4xx — no retry)", "type": "main", "index": 0 }],
+        [{ "node": "Wait 10s", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait 10s": {
+      "main": [[{ "node": "POST CAS2000 retry 2", "type": "main", "index": 0 }]]
+    },
+    "POST CAS2000 retry 2": {
+      "main": [[{ "node": "Retry 2: 2xx?", "type": "main", "index": 0 }]]
+    },
+    "Retry 2: 2xx?": {
+      "main": [
+        [{ "node": "cas-callback: synced (attempt 2)", "type": "main", "index": 0 }],
+        [{ "node": "Wait 30s", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait 30s": {
+      "main": [[{ "node": "POST CAS2000 retry 3", "type": "main", "index": 0 }]]
+    },
+    "POST CAS2000 retry 3": {
+      "main": [[{ "node": "Retry 3: 2xx?", "type": "main", "index": 0 }]]
+    },
+    "Retry 3: 2xx?": {
+      "main": [
+        [{ "node": "cas-callback: synced (attempt 3)", "type": "main", "index": 0 }],
+        [{ "node": "cas-callback: failed (3 retries exhausted)", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "instanceId": "imis-cas-001"
+  }
+}

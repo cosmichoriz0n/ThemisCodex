@@ -1,0 +1,220 @@
+{
+  "name": "IMIS-UPIS-DEPRECIATION",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "1 0 1 1 *"
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Cron: Jan 1 00:01 PHT",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [250, 350],
+      "notes": "Runs once per year on January 1 at 00:01 PHT (UTC+8 = Dec 31 16:01 UTC). Handles annual UPIS depreciation."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check dry-run mode. Set UPIS_DRY_RUN=true in Railway env to simulate without writing.\nconst dryRun = $env.UPIS_DRY_RUN === 'true';\nreturn [{ json: { dry_run: dryRun, started_at: new Date().toISOString() } }];"
+      },
+      "id": "check-dry-run",
+      "name": "Check dry-run mode",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 350],
+      "notes": "UPIS_DRY_RUN=true: skips all DB writes and CAS POSTs, logs only."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT i.item_id, i.item_name,\n       MAX(CASE WHEN ia.attribute_name = 'depreciation_rate'         THEN ia.attribute_value END) AS depreciation_rate,\n       MAX(CASE WHEN ia.attribute_name = 'accumulated_depreciation'  THEN ia.attribute_value END) AS accumulated_depreciation,\n       (\n         SELECT sm.unit_cost::numeric\n         FROM   stock_movements sm\n         WHERE  sm.item_id = i.item_id\n           AND  sm.movement_type = 'receive'\n         ORDER  BY sm.moved_at ASC\n         LIMIT  1\n       ) AS acquisition_cost\nFROM   items i\nJOIN   item_attributes ia ON ia.item_id = i.item_id\nWHERE  i.category_code    = 'UPIS'\n  AND  i.lifecycle_status != 'disposed'\n  AND  ia.attribute_name IN ('depreciation_rate', 'accumulated_depreciation')\nGROUP  BY i.item_id, i.item_name",
+        "options": {}
+      },
+      "id": "fetch-upis-items",
+      "name": "Fetch UPIS items",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [750, 350],
+      "credentials": { "postgres": { "id": "imis-railway-postgres", "name": "IMIS Railway Postgres" } },
+      "notes": "Returns all non-disposed UPIS items with depreciation_rate and current accumulated_depreciation."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calculate annual depreciation per item\nconst items = $input.all().map(item => {\n  const data = item.json;\n  const acquisitionCost = parseFloat(data.acquisition_cost ?? '0');\n  const depreciationRate = parseFloat(data.depreciation_rate ?? '0');\n  const prevAccum = parseFloat(data.accumulated_depreciation ?? '0');\n\n  if (acquisitionCost <= 0 || depreciationRate <= 0) {\n    return { json: { ...data, skipped: true, skip_reason: acquisitionCost <= 0 ? 'no_acquisition_cost' : 'zero_rate', annual_depreciation: 0, new_accumulated: prevAccum } };\n  }\n\n  const annualDepr = acquisitionCost * (depreciationRate / 100);\n  const newAccum   = prevAccum + annualDepr;\n  const netBookValue = Math.max(0, acquisitionCost - newAccum);\n\n  return { json: {\n    item_id: data.item_id,\n    item_name: data.item_name,\n    acquisition_cost: acquisitionCost,\n    depreciation_rate: depreciationRate,\n    annual_depreciation: parseFloat(annualDepr.toFixed(4)),\n    prev_accumulated: prevAccum,\n    new_accumulated: parseFloat(newAccum.toFixed(4)),\n    net_book_value: parseFloat(netBookValue.toFixed(4)),\n    skipped: false,\n    journal: {\n      journal_type: 'UPIS_DEPRECIATION',\n      description:  `Annual UPIS depreciation — ${data.item_name}`,\n      entries: [\n        { account_code: '5310', type: 'Debit',  amount: parseFloat(annualDepr.toFixed(4)) },\n        { account_code: '1990', type: 'Credit', amount: parseFloat(annualDepr.toFixed(4)) },\n      ]\n    }\n  } };\n});\nreturn items;"
+      },
+      "id": "calculate-depreciation",
+      "name": "Calculate depreciation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 350],
+      "notes": "Computes annual_depreciation = acquisition_cost × (rate / 100). Skips items with zero cost or rate."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.skipped }}",
+              "value2": false
+            }
+          ]
+        }
+      },
+      "id": "if-not-skipped",
+      "name": "Skip zero-rate items?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1250, 350]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $node['Check dry-run mode'].json.dry_run }}",
+              "value2": false
+            }
+          ]
+        }
+      },
+      "id": "if-not-dry-run",
+      "name": "Not dry-run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1500, 350],
+      "notes": "In dry-run mode: skip DB write and CAS POST, proceed to dry-run log only."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO item_attributes (item_id, attribute_name, attribute_value)\nVALUES ('{{ $json.item_id }}'::uuid, 'accumulated_depreciation', '{{ $json.new_accumulated }}')\nON CONFLICT (item_id, attribute_name)\nDO UPDATE SET attribute_value = EXCLUDED.attribute_value, updated_at = now()",
+        "options": {}
+      },
+      "id": "update-accumulated-depreciation",
+      "name": "Update accumulated_depreciation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1750, 250],
+      "credentials": { "postgres": { "id": "imis-railway-postgres", "name": "IMIS Railway Postgres" } },
+      "notes": "Upserts accumulated_depreciation for this item."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CAS2000_BASE_URL }}/api/journals",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "X-Api-Key",    "value": "={{ $env.CAS2000_API_KEY }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.journal) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "post-cas-depreciation-journal",
+      "name": "POST CAS2000 depreciation journal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [2000, 250],
+      "notes": "Posts Dr 5310 / Cr 1990 journal for this UPIS item."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/integration-log",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-imis-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"source_system\":\"CAS2000\",\"operation\":\"IMIS-UPIS-DEPRECIATION\",\"status\":\"{{ $json.statusCode <= 299 ? 'success' : 'failure' }}\",\"payload\":{\"item_id\":\"{{ $node['Calculate depreciation'].json.item_id }}\",\"annual_depreciation\":{{ $node['Calculate depreciation'].json.annual_depreciation }},\"new_accumulated\":{{ $node['Calculate depreciation'].json.new_accumulated }},\"cas_status\":{{ $json.statusCode }}},\"error_msg\":\"{{ $json.statusCode > 299 ? 'CAS2000 responded ' + $json.statusCode : null }}\"}"
+      },
+      "id": "log-depreciation-result",
+      "name": "Log: depreciation result",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [2250, 250]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/integration-log",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-imis-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"source_system\":\"CAS2000\",\"operation\":\"IMIS-UPIS-DEPRECIATION\",\"status\":\"success\",\"payload\":{\"dry_run\":true,\"item_id\":\"{{ $json.item_id }}\",\"annual_depreciation\":{{ $json.annual_depreciation }},\"new_accumulated\":{{ $json.new_accumulated }}}}"
+      },
+      "id": "log-dry-run",
+      "name": "Log: dry-run result",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1750, 480],
+      "notes": "Dry-run: logs computed values without writing to DB or CAS2000."
+    }
+  ],
+  "connections": {
+    "Cron: Jan 1 00:01 PHT": {
+      "main": [[{ "node": "Check dry-run mode", "type": "main", "index": 0 }]]
+    },
+    "Check dry-run mode": {
+      "main": [[{ "node": "Fetch UPIS items", "type": "main", "index": 0 }]]
+    },
+    "Fetch UPIS items": {
+      "main": [[{ "node": "Calculate depreciation", "type": "main", "index": 0 }]]
+    },
+    "Calculate depreciation": {
+      "main": [[{ "node": "Skip zero-rate items?", "type": "main", "index": 0 }]]
+    },
+    "Skip zero-rate items?": {
+      "main": [
+        [{ "node": "Not dry-run?", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Not dry-run?": {
+      "main": [
+        [{ "node": "Update accumulated_depreciation", "type": "main", "index": 0 }],
+        [{ "node": "Log: dry-run result", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update accumulated_depreciation": {
+      "main": [[{ "node": "POST CAS2000 depreciation journal", "type": "main", "index": 0 }]]
+    },
+    "POST CAS2000 depreciation journal": {
+      "main": [[{ "node": "Log: depreciation result", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Manila"
+  },
+  "meta": {
+    "instanceId": "imis-upis-depreciation"
+  }
+}

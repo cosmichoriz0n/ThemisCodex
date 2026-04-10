@@ -1,0 +1,216 @@
+{
+  "name": "IMIS-CAS-RECONCILE",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 15 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Cron: 23:00 PHT daily",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [250, 350],
+      "notes": "Runs daily at 23:00 PHT (15:00 UTC). Reconciles IMIS totals vs CAS2000 journal debits for yesterday PHT."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Compute yesterday in PHT (UTC+8) as YYYY-MM-DD\nconst now    = new Date();\nconst phtMs  = now.getTime() + (8 * 60 * 60 * 1000);\nconst phtNow = new Date(phtMs);\nphtNow.setDate(phtNow.getDate() - 1);\nconst yyyy = phtNow.getUTCFullYear();\nconst mm   = String(phtNow.getUTCMonth() + 1).padStart(2, '0');\nconst dd   = String(phtNow.getUTCDate()).padStart(2, '0');\nconst reconciliationDate = `${yyyy}-${mm}-${dd}`;\nreturn [{ json: { reconciliation_date: reconciliationDate } }];"
+      },
+      "id": "compute-date",
+      "name": "Compute yesterday PHT",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 350],
+      "notes": "Produces the PHT date string for yesterday (YYYY-MM-DD)."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  COUNT(*)::int           AS transaction_count,\n  COALESCE(SUM(total_amount), 0)::numeric(14,4) AS imis_total\nFROM transactions\nWHERE status IN ('posted', 'reconciled')\n  AND DATE(created_at AT TIME ZONE 'Asia/Manila') = '{{ $json.reconciliation_date }}'::date",
+        "options": {}
+      },
+      "id": "query-imis-totals",
+      "name": "Query IMIS totals",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [750, 250],
+      "credentials": { "postgres": { "id": "imis-railway-postgres", "name": "IMIS Railway Postgres" } },
+      "notes": "Sums posted/reconciled transactions for yesterday PHT."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.CAS2000_BASE_URL }}/api/journals/daily-totals",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "date", "value": "={{ $node['Compute yesterday PHT'].json.reconciliation_date }}" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Api-Key", "value": "={{ $env.CAS2000_API_KEY }}" }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "query-cas-totals",
+      "name": "GET CAS2000 daily totals",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [750, 480],
+      "notes": "Fetches sum of journal debits from CAS2000 for the reconciliation date."
+    },
+    {
+      "parameters": {
+        "mode": "waitForAll",
+        "outputDataFrom": "input1"
+      },
+      "id": "merge-branches",
+      "name": "Merge: Wait for both branches",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [1000, 350],
+      "notes": "Waits for both IMIS DB query and CAS2000 HTTP request to complete before proceeding. Prevents the Code node being triggered twice (once per branch)."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Both branches have completed. Read results by node name (available in execution context).\nconst imisRow   = $node['Query IMIS totals'].first().json;\nconst casRes    = $node['GET CAS2000 daily totals'].first().json;\nconst reconDate = $node['Compute yesterday PHT'].first().json.reconciliation_date;\n\nconst imisTotal    = parseFloat(imisRow.imis_total ?? '0');\nconst casAvailable = casRes.statusCode <= 299;\nconst casTotal     = casAvailable\n  ? parseFloat(casRes.body?.total_debits ?? '0')\n  : 0;\n\nconst variance  = parseFloat((imisTotal - casTotal).toFixed(4));\nconst isMatched = Math.abs(variance) < 0.01;\nconst status    = !casAvailable ? 'pending' : (isMatched ? 'matched' : 'variance');\n\nconst casTransactions = casRes.body?.transactions ?? [];\nconst details = {\n  imis_transaction_count: imisRow.transaction_count,\n  cas_available:          casAvailable,\n  cas_transactions:       casTransactions,\n  variance_explanation:   isMatched\n    ? 'Totals match within tolerance (< 0.01 PHP)'\n    : `Variance of ${Math.abs(variance).toFixed(4)} PHP detected`,\n};\n\nreturn [{ json: {\n  reconciliation_date: reconDate,\n  imis_total:          imisTotal,\n  cas_total_debits:    casTotal,\n  variance,\n  matched_count:       isMatched ? imisRow.transaction_count : 0,\n  unmatched_count:     isMatched ? 0 : imisRow.transaction_count,\n  status,\n  details:             JSON.stringify(details),\n  has_variance:        !isMatched && casAvailable,\n} }];"
+      },
+      "id": "compare-totals",
+      "name": "Compare and compute variance",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 350],
+      "notes": "Computes variance = IMIS total - CAS total. Status: 'matched' | 'variance' | 'pending' (CAS unavailable)."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO reconciliation_results\n  (reconciliation_date, imis_total, cas_total_debits, variance,\n   matched_count, unmatched_count, status, details)\nVALUES\n  ($1::date, $2::numeric, $3::numeric, $4::numeric,\n   $5::int,   $6::int,   $7::text,   $8::jsonb)\nON CONFLICT (reconciliation_date)\nDO UPDATE SET\n  imis_total       = EXCLUDED.imis_total,\n  cas_total_debits = EXCLUDED.cas_total_debits,\n  variance         = EXCLUDED.variance,\n  matched_count    = EXCLUDED.matched_count,\n  unmatched_count  = EXCLUDED.unmatched_count,\n  status           = EXCLUDED.status,\n  details          = EXCLUDED.details,\n  updated_at       = now()",
+        "additionalFields": {
+          "queryParameters": "={{ JSON.stringify([$json.reconciliation_date, $json.imis_total, $json.cas_total_debits, $json.variance, $json.matched_count, $json.unmatched_count, $json.status, $json.details]) }}"
+        },
+        "options": {}
+      },
+      "id": "upsert-reconciliation-result",
+      "name": "Upsert reconciliation_results",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1500, 350],
+      "credentials": { "postgres": { "id": "imis-railway-postgres", "name": "IMIS Railway Postgres" } },
+      "notes": "Upserts today's reconciliation result using parameterised $1–$8 — safe for JSONB details containing apostrophes or special characters."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $node['Compare and compute variance'].json.has_variance }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-has-variance",
+      "name": "Has variance?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1750, 350]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.IMIS_ALERT_FROM_EMAIL }}",
+        "toEmail": "={{ $env.FINANCE_OFFICER_EMAIL }}",
+        "subject": "=[IMIS ALERT] Reconciliation variance detected for {{ $node['Compute yesterday PHT'].json.reconciliation_date }}",
+        "text": "=IMIS Nightly Reconciliation — Variance Detected\n\nDate: {{ $node['Compute yesterday PHT'].json.reconciliation_date }}\nIMIS Total (posted/reconciled): PHP {{ $node['Compare and compute variance'].json.imis_total }}\nCAS2000 Total (journal debits): PHP {{ $node['Compare and compute variance'].json.cas_total_debits }}\nVariance: PHP {{ $node['Compare and compute variance'].json.variance }}\n\nPlease log in to IMIS and review the Reconciliation dashboard at /reconciliation for drill-down details.\n\nThis is an automated alert from the IMIS n8n reconciliation workflow.",
+        "options": {}
+      },
+      "id": "send-variance-alert",
+      "name": "Email: variance alert to finance_officer",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [2000, 250],
+      "credentials": { "smtp": { "id": "imis-smtp", "name": "IMIS SMTP" } },
+      "notes": "Sends email to finance_officer when variance > 0.01 PHP."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/integration-log",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-imis-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"source_system\":\"CAS2000\",\"operation\":\"IMIS-CAS-RECONCILE\",\"status\":\"success\",\"payload\":{\"reconciliation_date\":\"{{ $node['Compute yesterday PHT'].json.reconciliation_date }}\",\"status\":\"{{ $node['Compare and compute variance'].json.status }}\",\"imis_total\":{{ $node['Compare and compute variance'].json.imis_total }},\"cas_total\":{{ $node['Compare and compute variance'].json.cas_total_debits }},\"variance\":{{ $node['Compare and compute variance'].json.variance }}}}"
+      },
+      "id": "log-reconciliation",
+      "name": "Log: reconciliation complete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [2000, 480]
+    }
+  ],
+  "connections": {
+    "Cron: 23:00 PHT daily": {
+      "main": [[{ "node": "Compute yesterday PHT", "type": "main", "index": 0 }]]
+    },
+    "Compute yesterday PHT": {
+      "main": [
+        [{ "node": "Query IMIS totals",        "type": "main", "index": 0 }],
+        [{ "node": "GET CAS2000 daily totals",  "type": "main", "index": 0 }]
+      ]
+    },
+    "Query IMIS totals": {
+      "main": [[{ "node": "Merge: Wait for both branches", "type": "main", "index": 0 }]]
+    },
+    "GET CAS2000 daily totals": {
+      "main": [[{ "node": "Merge: Wait for both branches", "type": "main", "index": 1 }]]
+    },
+    "Merge: Wait for both branches": {
+      "main": [[{ "node": "Compare and compute variance", "type": "main", "index": 0 }]]
+    },
+    "Compare and compute variance": {
+      "main": [[{ "node": "Upsert reconciliation_results", "type": "main", "index": 0 }]]
+    },
+    "Upsert reconciliation_results": {
+      "main": [[{ "node": "Has variance?", "type": "main", "index": 0 }]]
+    },
+    "Has variance?": {
+      "main": [
+        [{ "node": "Email: variance alert to finance_officer", "type": "main", "index": 0 }],
+        [{ "node": "Log: reconciliation complete",             "type": "main", "index": 0 }]
+      ]
+    },
+    "Email: variance alert to finance_officer": {
+      "main": [[{ "node": "Log: reconciliation complete", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Manila"
+  },
+  "meta": {
+    "instanceId": "imis-cas-reconcile"
+  }
+}

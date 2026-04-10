@@ -27,11 +27,20 @@ export const transactions = pgTable(
     ebsSyncAttempts: integer("ebs_sync_attempts").notNull().default(0),
     lastEbsAttemptAt: timestamp("last_ebs_attempt_at", { withTimezone: true }),
     movementId: uuid("movement_id").references(() => stockMovements.movementId),
+    // Sprint 7: CAS2000 journal sync
+    casSyncStatus: text("cas_sync_status", {
+      enum: ["pending", "synced", "failed"],
+    })
+      .notNull()
+      .default("pending"),
+    casSyncAttempts: integer("cas_sync_attempts").notNull().default(0),
+    lastCasAttemptAt: timestamp("last_cas_attempt_at", { withTimezone: true }),
   },
   (table) => [
     index("transactions_member_idx").on(table.memberId),
     index("transactions_status_idx").on(table.status),
     index("transactions_ebs_sync_status_idx").on(table.ebsSyncStatus),
     index("transactions_movement_idx").on(table.movementId),
+    index("transactions_cas_sync_status_idx").on(table.casSyncStatus),
   ]
 );

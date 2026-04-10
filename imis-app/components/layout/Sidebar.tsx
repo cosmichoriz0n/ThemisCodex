@@ -18,6 +18,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/items", label: "Item Catalog", roles: ["inventory_manager", "system_admin"] },
   { href: "/members", label: "Members", roles: ["inventory_staff", "inventory_manager", "finance_officer", "system_admin"] },
   { href: "/transactions", label: "Transactions", roles: ["inventory_staff", "inventory_manager", "finance_officer", "system_admin", "auditor"] },
+  { href: "/reconciliation", label: "Reconciliation", roles: ["finance_officer", "inventory_manager", "system_admin", "auditor"] },
   { href: "/disposal", label: "Disposal", roles: ["inventory_manager", "system_admin", "auditor"] },
   { href: "/pms", label: "PMS Schedules", roles: ["inventory_staff", "inventory_manager", "system_admin"] },
   { href: "/alerts", label: "Alerts", roles: ["inventory_staff", "inventory_manager", "finance_officer", "system_admin", "auditor"] },

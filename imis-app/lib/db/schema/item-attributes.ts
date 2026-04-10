@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, index } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { items } from "./items";
 
@@ -14,5 +14,8 @@ export const itemAttributes = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
   },
-  (table) => [index("item_attributes_item_idx").on(table.itemId)]
+  (table) => [
+    index("item_attributes_item_idx").on(table.itemId),
+    uniqueIndex("item_attributes_item_attr_unique").on(table.itemId, table.attributeName),
+  ]
 );
