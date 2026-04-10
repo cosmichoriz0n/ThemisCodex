@@ -192,6 +192,92 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── 6. LTO renewal within 60 days (TR — lto_expiry attribute) ────────────
+  const threshold60 = daysFromNow(60);
+
+  const ltoRows = await db
+    .select({
+      itemId:         itemAttributes.itemId,
+      itemName:       items.itemName,
+      attributeValue: itemAttributes.attributeValue,
+    })
+    .from(itemAttributes)
+    .innerJoin(items, eq(itemAttributes.itemId, items.itemId))
+    .where(
+      and(
+        eq(itemAttributes.attributeName, "lto_expiry"),
+        eq(items.categoryCode, "TR"),
+        inArray(items.lifecycleStatus, ["in_stock", "acquired", "in_service"])
+      )
+    );
+
+  for (const row of ltoRows) {
+    if (!row.attributeValue) continue;
+    const expiry = new Date(row.attributeValue);
+    if (isNaN(expiry.getTime())) continue;
+    if (expiry <= threshold60 && expiry >= NOW_PHT()) {
+      const details = `LTO registration expires ${expiry.toLocaleDateString("en-PH")} (within 60 days)`;
+      const created = await upsertAlert(row.itemId, "lto_renewal", details);
+      if (created) alertsCreated.push({ item_id: row.itemId, item_name: row.itemName, alert_type: "lto_renewal", details });
+    }
+  }
+
+  // ── 7. Insurance expiry within 60 days (TR + MP — insurance_expiry attribute) ──
+  const insuranceRows = await db
+    .select({
+      itemId:         itemAttributes.itemId,
+      itemName:       items.itemName,
+      attributeValue: itemAttributes.attributeValue,
+    })
+    .from(itemAttributes)
+    .innerJoin(items, eq(itemAttributes.itemId, items.itemId))
+    .where(
+      and(
+        eq(itemAttributes.attributeName, "insurance_expiry"),
+        inArray(items.categoryCode, ["TR", "MP"]),
+        inArray(items.lifecycleStatus, ["in_stock", "acquired", "in_service"])
+      )
+    );
+
+  for (const row of insuranceRows) {
+    if (!row.attributeValue) continue;
+    const expiry = new Date(row.attributeValue);
+    if (isNaN(expiry.getTime())) continue;
+    if (expiry <= threshold60 && expiry >= NOW_PHT()) {
+      const details = `Vehicle insurance expires ${expiry.toLocaleDateString("en-PH")} (within 60 days)`;
+      const created = await upsertAlert(row.itemId, "insurance_expiry", details);
+      if (created) alertsCreated.push({ item_id: row.itemId, item_name: row.itemName, alert_type: "insurance_expiry", details });
+    }
+  }
+
+  // ── 8. Emission test due within 30 days (TR — emission_due attribute) ─────
+  const emissionRows = await db
+    .select({
+      itemId:         itemAttributes.itemId,
+      itemName:       items.itemName,
+      attributeValue: itemAttributes.attributeValue,
+    })
+    .from(itemAttributes)
+    .innerJoin(items, eq(itemAttributes.itemId, items.itemId))
+    .where(
+      and(
+        eq(itemAttributes.attributeName, "emission_due"),
+        eq(items.categoryCode, "TR"),
+        inArray(items.lifecycleStatus, ["in_stock", "acquired", "in_service"])
+      )
+    );
+
+  for (const row of emissionRows) {
+    if (!row.attributeValue) continue;
+    const expiry = new Date(row.attributeValue);
+    if (isNaN(expiry.getTime())) continue;
+    if (expiry <= threshold30 && expiry >= NOW_PHT()) {
+      const details = `Emission test due ${expiry.toLocaleDateString("en-PH")} (within 30 days)`;
+      const created = await upsertAlert(row.itemId, "emission_due", details);
+      if (created) alertsCreated.push({ item_id: row.itemId, item_name: row.itemName, alert_type: "emission_due", details });
+    }
+  }
+
   return NextResponse.json({
     data: {
       alerts_created: alertsCreated.length,

@@ -10,7 +10,7 @@ export const reorderAlerts = pgTable(
       .notNull()
       .references(() => items.itemId),
     alertType: text("alert_type", {
-      enum: ["low_stock", "expiry", "pms_due", "license_expiry", "calibration_due"],
+      enum: ["low_stock", "expiry", "pms_due", "license_expiry", "calibration_due", "lto_renewal", "insurance_expiry", "emission_due"],
     }).notNull(),
     status: text("status", { enum: ["open", "acknowledged", "resolved"] })
       .notNull()

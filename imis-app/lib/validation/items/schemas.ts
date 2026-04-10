@@ -68,6 +68,7 @@ export const MPSchema = baseItemSchema.extend({
     .min(1900)
     .max(new Date().getFullYear() + 1, "Year cannot be in the future"),
   mileage: z.coerce.number().nonnegative("Mileage must be 0 or greater"),
+  insurance_expiry: z.string().optional(),
 });
 
 export const HWSchema = baseItemSchema.extend({
@@ -107,6 +108,8 @@ export const TRSchema = baseItemSchema.extend({
   chassis_no: csvSafe.min(1, "Chassis number is required"),
   engine_no: csvSafe.min(1, "Engine number is required"),
   insurance_expiry: z.string().optional(),
+  lto_expiry: z.string().optional(),
+  emission_due: z.string().optional(),
 });
 
 export const CESchema = baseItemSchema.extend({

@@ -1,55 +1,26 @@
 import "server-only";
 import { NextRequest, NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
 import { withAuth } from "@/lib/auth/withAuth";
-import { withRole } from "@/lib/db/with-role";
 import { MANAGER_ABOVE } from "@/lib/auth/permissions";
-import { items } from "@/lib/db/schema/items";
-import { lifecycleEvents } from "@/lib/db/schema/lifecycle-events";
-import { auditLog } from "@/lib/db/schema/audit-log";
 
-export const POST = withAuth(async (req: NextRequest, { user, role, params }) => {
-  const { id } = params;
-
-  const existing = await withRole(user.uid, role, async (tx) => {
-    const [row] = await tx.select().from(items).where(eq(items.itemId, id)).limit(1);
-    return row;
-  });
-
-  if (!existing) {
-    return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
-  }
-
-  if (existing.lifecycleStatus === "disposed") {
-    return NextResponse.json({ error: "ALREADY_DEACTIVATED" }, { status: 409 });
-  }
-
-  await withRole(user.uid, role, async (tx) => {
-    const previousStatus = existing.lifecycleStatus;
-
-    await tx
-      .update(items)
-      .set({ lifecycleStatus: "disposed", updatedAt: new Date() })
-      .where(eq(items.itemId, id));
-
-    await tx.insert(lifecycleEvents).values({
-      itemId: id,
-      fromState: previousStatus,
-      toState: "disposed",
-      authorizedBy: user.uid,
-      remarks: "Deactivated via catalog management (Sprint 8 full disposal workflow pending)",
-    });
-
-    await tx.insert(auditLog).values({
-      userId: user.uid,
-      userRole: role,
-      action: "item_deactivated",
-      resource: "items",
-      resourceId: id,
-      details: { previousStatus },
-      ipAddress: req.headers.get("x-forwarded-for") ?? undefined,
-    });
-  });
-
-  return NextResponse.json({ success: true });
+/**
+ * POST/PATCH/DELETE /api/items/[id]/deactivate
+ *
+ * Superseded by the Sprint 8 multi-step disposal workflow.
+ * All verbs return 410 so callers on any HTTP method get the deprecation notice.
+ * Use POST /api/disposal to initiate the 4-step disposal workflow.
+ */
+const gone = withAuth(async (_req: NextRequest) => {
+  return NextResponse.json(
+    {
+      error: "ENDPOINT_REMOVED",
+      message:
+        "Direct deactivation is no longer supported. Use POST /api/disposal to initiate the 4-step disposal workflow (requested → under_inspection → authorized → disposed).",
+    },
+    { status: 410 }
+  );
 }, MANAGER_ABOVE);
+
+export const POST   = gone;
+export const PATCH  = gone;
+export const DELETE = gone;

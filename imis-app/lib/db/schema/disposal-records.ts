@@ -10,7 +10,7 @@ export const disposalRecords = pgTable(
       .notNull()
       .references(() => items.itemId),
     disposalType: text("disposal_type", {
-      enum: ["auction", "condemnation", "donation", "write_off"],
+      enum: ["condemned", "scrap_sale", "donated", "transferred"],
     }).notNull(),
     status: text("status", {
       enum: ["requested", "under_inspection", "authorized", "disposed"],
