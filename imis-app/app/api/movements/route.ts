@@ -7,6 +7,9 @@ import { ALL_ROLES, MANAGER_ABOVE } from "@/lib/auth/permissions";
 import { stockMovements } from "@/lib/db/schema/stock-movements";
 import { items } from "@/lib/db/schema/items";
 import { auditLog } from "@/lib/db/schema/audit-log";
+import { transactions } from "@/lib/db/schema/transactions";
+import { transactionItems } from "@/lib/db/schema/transaction-items";
+import { signPayload } from "@/lib/webhooks/sign";
 import type { Role } from "@/types/auth";
 
 // Movement types and who can perform them
@@ -157,7 +160,7 @@ export const POST = withAuth(async (req: NextRequest, { user, role }) => {
     );
   }
 
-  const result = await withRole(user.uid, role, async (tx) => {
+  const withRoleResult = await withRole(user.uid, role, async (tx) => {
     // Call the process_stock_movement() PostgreSQL RPC
     const rows = await tx.execute(sql`
       SELECT process_stock_movement(
@@ -178,7 +181,7 @@ export const POST = withAuth(async (req: NextRequest, { user, role }) => {
     `);
 
     const rpcResult = (rows as unknown as Array<{ result: RpcResult }>)[0]?.result;
-    if (!rpcResult) return { ok: false, error: "RPC_RETURNED_NULL" };
+    if (!rpcResult) return { ok: false as const, error: "RPC_RETURNED_NULL", transactionId: null };
 
     // If manager override was used, write a warning entry to audit_log
     if (rpcResult.ok && rpcResult.manager_override_used) {
@@ -220,8 +223,35 @@ export const POST = withAuth(async (req: NextRequest, { user, role }) => {
       });
     }
 
-    return rpcResult;
+    // Sprint 6: create a transaction record for issue movements (atomic with the movement)
+    let transactionId: string | null = null;
+    if (rpcResult.ok && movement_type === "issue") {
+      const unitCostVal = unit_cost != null ? String(unit_cost) : "0";
+      const totalAmount = (Number(unitCostVal) * (quantity as number)).toFixed(4);
+      const [txnRow] = await tx
+        .insert(transactions)
+        .values({
+          memberId:      (member_id as string | null) ?? null,
+          totalAmount,
+          status:        "pending",
+          ebsSyncStatus: "pending",
+          createdBy:     user.uid,
+          movementId:    rpcResult.movement_id ?? null,
+        })
+        .returning({ transactionId: transactions.transactionId });
+      transactionId = txnRow.transactionId;
+      await tx.insert(transactionItems).values({
+        transactionId: txnRow.transactionId,
+        itemId:        item_id as string,
+        quantity:      quantity as number,
+        unitPrice:     unitCostVal,
+      });
+    }
+
+    return { ...rpcResult, transactionId };
   });
+
+  const { transactionId, ...result } = withRoleResult;
 
   if (!result.ok) {
     const statusMap: Record<string, number> = {
@@ -237,26 +267,29 @@ export const POST = withAuth(async (req: NextRequest, { user, role }) => {
     return NextResponse.json({ error: result.error, detail: result }, { status: httpStatus });
   }
 
-  // Emit n8n webhook for issue movements (fire-and-forget, non-blocking)
-  if (movement_type === "issue" && process.env.N8N_WEBHOOK_URL) {
-    fetch(`${process.env.N8N_WEBHOOK_URL}/stock-issue`, {
+  // Sprint 6: Fire HMAC-signed webhook to n8n IMIS-EBS-001 for issue movements.
+  // Fire-and-forget — if n8n is unreachable the transaction stays ebs_sync_status='pending'
+  // and admin can use the manual retry button to re-trigger.
+  if (result.ok && movement_type === "issue" && transactionId && process.env.N8N_WEBHOOK_URL) {
+    const webhookPayload = {
+      transaction_id: transactionId,
+      movement_id:    result.movement_id,
+      item_id,
+      quantity,
+      member_id:      member_id ?? null,
+      reference_no:   reference_no ?? null,
+      moved_by:       user.uid,
+      moved_at:       new Date().toISOString(),
+    };
+    const signature = signPayload(webhookPayload, process.env.N8N_WEBHOOK_SECRET ?? "");
+    fetch(`${process.env.N8N_WEBHOOK_URL}/imis-ebs-001`, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
-        "x-imis-secret": process.env.N8N_WEBHOOK_SECRET ?? "",
+        "Content-Type":    "application/json",
+        "X-IMIS-Signature": signature,
       },
-      body: JSON.stringify({
-        movement_id:  result.movement_id,
-        item_id,
-        quantity,
-        member_id:    member_id ?? null,
-        reference_no: reference_no ?? null,
-        moved_by:     user.uid,
-        moved_at:     new Date().toISOString(),
-      }),
-    }).catch(() => {
-      // Webhook failure is non-fatal; n8n will poll or retry separately
-    });
+      body: JSON.stringify(webhookPayload),
+    }).catch(() => {});
   }
 
   return NextResponse.json({ data: result }, { status: 201 });

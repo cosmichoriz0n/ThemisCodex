@@ -1,0 +1,633 @@
+{
+  "name": "IMIS-EBS-001",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "imis-ebs-001",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook: IMIS stock-issue",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 350],
+      "notes": "Receives HMAC-signed webhook from IMIS when an issue movement is created."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"status\":\"received\",\"transaction_id\":\"{{ $json.body.transaction_id }}\"}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-to-webhook",
+      "name": "Respond: 200 received",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [500, 200],
+      "notes": "Immediately acks the webhook so IMIS does not wait on EBS round-trip. Workflow continues processing asynchronously."
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst secret = $env.N8N_WEBHOOK_SECRET;\nconst input = $input.first().json;\nconst body = input.body ?? input;\nconst headers = input.headers ?? {};\nconst signature = headers['x-imis-signature'] || headers['X-IMIS-Signature'] || '';\n\n// Verify HMAC-SHA256 from IMIS\nconst expected = crypto\n  .createHmac('sha256', secret)\n  .update(JSON.stringify(body))\n  .digest('hex');\nconst isValid = signature === expected;\n\n// Build trimmed EBS billing body and re-sign for EBS2000\nconst ebsBody = {\n  transaction_id: body.transaction_id,\n  movement_id:    body.movement_id,\n  item_id:        body.item_id,\n  quantity:       body.quantity,\n  member_id:      body.member_id,\n  reference_no:   body.reference_no,\n};\nconst ebsSignature = crypto\n  .createHmac('sha256', secret)\n  .update(JSON.stringify(ebsBody))\n  .digest('hex');\n\nreturn [{\n  json: {\n    transaction_id: body.transaction_id,\n    movement_id:    body.movement_id,\n    item_id:        body.item_id,\n    quantity:       body.quantity,\n    member_id:      body.member_id,\n    reference_no:   body.reference_no,\n    moved_by:       body.moved_by,\n    moved_at:       body.moved_at,\n    _hmac_valid:    isValid,\n    _ebs_body:      ebsBody,\n    _ebs_signature: ebsSignature,\n  }\n}];"
+      },
+      "id": "verify-hmac",
+      "name": "Verify HMAC + Re-sign",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 400],
+      "notes": "Verifies X-IMIS-Signature. Sets _hmac_valid. Re-signs trimmed body for EBS2000 as _ebs_signature."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json._hmac_valid }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-hmac-valid",
+      "name": "HMAC valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [750, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/integration-log",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-imis-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"source_system\":\"EBS2000\",\"operation\":\"IMIS-EBS-001\",\"status\":\"failure\",\"error_msg\":\"INVALID_HMAC_SIGNATURE — possible replay or misconfigured secret\",\"payload\":{\"transaction_id\":\"{{ $json.transaction_id }}\"}}"
+      },
+      "id": "log-security-violation",
+      "name": "Log: security_violation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1000, 280],
+      "notes": "HMAC verification failed — log and stop. Do not forward to EBS2000."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.EBS2000_API_URL }}/api/billing",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type",       "value": "application/json" },
+            { "name": "x-api-key",          "value": "={{ $env.EBS2000_API_KEY }}" },
+            { "name": "X-IMIS-Signature",   "value": "={{ $json._ebs_signature }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json._ebs_body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "post-ebs-billing",
+      "name": "POST EBS2000 /api/billing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1000, 520],
+      "notes": "First attempt. fullResponse=true to capture statusCode. neverError=true so 4xx/5xx don't throw."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.statusCode }}",
+              "operation": "smallerEqual",
+              "value2": 299
+            }
+          ]
+        }
+      },
+      "id": "if-billing-2xx",
+      "name": "Billing 2xx?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1250, 520]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/transactions/{{ $node['Verify HMAC + Re-sign'].json.transaction_id }}/ebs-callback",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-imis-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"billing_ref\":\"{{ $json.body.billing_ref ?? null }}\",\"ebs_sync_status\":\"synced\",\"ebs_sync_attempts\":1}"
+      },
+      "id": "ebs-callback-synced-1",
+      "name": "ebs-callback: synced (attempt 1)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1500, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/integration-log",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-imis-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"source_system\":\"EBS2000\",\"operation\":\"IMIS-EBS-001\",\"status\":\"success\",\"payload\":{\"transaction_id\":\"{{ $node['Verify HMAC + Re-sign'].json.transaction_id }}\",\"billing_ref\":\"{{ $node['POST EBS2000 /api/billing'].json.body.billing_ref ?? null }}\",\"attempts\":1}}"
+      },
+      "id": "log-success",
+      "name": "Log: success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1750, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.statusCode }}",
+              "operation": "largerEqual",
+              "value2": 400
+            },
+            {
+              "value1": "={{ $json.statusCode }}",
+              "operation": "smallerEqual",
+              "value2": 499
+            }
+          ]
+        },
+        "combineOperation": "all"
+      },
+      "id": "if-billing-4xx",
+      "name": "Billing 4xx?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1500, 620]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/transactions/{{ $node['Verify HMAC + Re-sign'].json.transaction_id }}/ebs-callback",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-imis-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"ebs_sync_status\":\"failed\",\"ebs_sync_attempts\":1,\"error_msg\":\"EBS2000 rejected: HTTP {{ $node['POST EBS2000 /api/billing'].json.statusCode }} — {{ JSON.stringify($node['POST EBS2000 /api/billing'].json.body) }}\"}"
+      },
+      "id": "ebs-callback-failed-4xx",
+      "name": "ebs-callback: failed 4xx (attempt 1)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1750, 520]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/integration-log",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-imis-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"source_system\":\"EBS2000\",\"operation\":\"IMIS-EBS-001\",\"status\":\"failure\",\"error_msg\":\"4xx permanent failure: HTTP {{ $node['POST EBS2000 /api/billing'].json.statusCode }}\",\"payload\":{\"transaction_id\":\"{{ $node['Verify HMAC + Re-sign'].json.transaction_id }}\"},\"retry_count\":1}"
+      },
+      "id": "log-failure-4xx",
+      "name": "Log: failure (4xx, no retry)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [2000, 520]
+    },
+    {
+      "parameters": {
+        "amount": 10,
+        "unit": "seconds"
+      },
+      "id": "wait-10s",
+      "name": "Wait 10s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [1750, 720],
+      "webhookId": "wait-10s-resume"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.EBS2000_API_URL }}/api/billing",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type",       "value": "application/json" },
+            { "name": "x-api-key",          "value": "={{ $env.EBS2000_API_KEY }}" },
+            { "name": "X-IMIS-Signature",   "value": "={{ $node['Verify HMAC + Re-sign'].json._ebs_signature }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($node['Verify HMAC + Re-sign'].json._ebs_body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "post-ebs-retry-1",
+      "name": "POST EBS2000 retry 1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [2000, 720]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.statusCode }}",
+              "operation": "smallerEqual",
+              "value2": 299
+            }
+          ]
+        }
+      },
+      "id": "if-retry1-2xx",
+      "name": "Retry1 2xx?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2250, 720]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/transactions/{{ $node['Verify HMAC + Re-sign'].json.transaction_id }}/ebs-callback",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-imis-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"billing_ref\":\"{{ $json.body.billing_ref ?? null }}\",\"ebs_sync_status\":\"synced\",\"ebs_sync_attempts\":2}"
+      },
+      "id": "ebs-callback-synced-2",
+      "name": "ebs-callback: synced (attempt 2)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [2500, 620]
+    },
+    {
+      "parameters": {
+        "amount": 30,
+        "unit": "seconds"
+      },
+      "id": "wait-30s",
+      "name": "Wait 30s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [2500, 820],
+      "webhookId": "wait-30s-resume"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.EBS2000_API_URL }}/api/billing",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type",       "value": "application/json" },
+            { "name": "x-api-key",          "value": "={{ $env.EBS2000_API_KEY }}" },
+            { "name": "X-IMIS-Signature",   "value": "={{ $node['Verify HMAC + Re-sign'].json._ebs_signature }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($node['Verify HMAC + Re-sign'].json._ebs_body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "post-ebs-retry-2",
+      "name": "POST EBS2000 retry 2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [2750, 820]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.statusCode }}",
+              "operation": "smallerEqual",
+              "value2": 299
+            }
+          ]
+        }
+      },
+      "id": "if-retry2-2xx",
+      "name": "Retry2 2xx?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [3000, 820]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/transactions/{{ $node['Verify HMAC + Re-sign'].json.transaction_id }}/ebs-callback",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-imis-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"billing_ref\":\"{{ $json.body.billing_ref ?? null }}\",\"ebs_sync_status\":\"synced\",\"ebs_sync_attempts\":3}"
+      },
+      "id": "ebs-callback-synced-3",
+      "name": "ebs-callback: synced (attempt 3)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [3250, 720]
+    },
+    {
+      "parameters": {
+        "amount": 90,
+        "unit": "seconds"
+      },
+      "id": "wait-90s",
+      "name": "Wait 90s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [3250, 920],
+      "webhookId": "wait-90s-resume"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.EBS2000_API_URL }}/api/billing",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type",       "value": "application/json" },
+            { "name": "x-api-key",          "value": "={{ $env.EBS2000_API_KEY }}" },
+            { "name": "X-IMIS-Signature",   "value": "={{ $node['Verify HMAC + Re-sign'].json._ebs_signature }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($node['Verify HMAC + Re-sign'].json._ebs_body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "post-ebs-retry-3",
+      "name": "POST EBS2000 retry 3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [3500, 920]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.statusCode }}",
+              "operation": "smallerEqual",
+              "value2": 299
+            }
+          ]
+        }
+      },
+      "id": "if-retry3-2xx",
+      "name": "Retry3 2xx?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [3750, 920]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/transactions/{{ $node['Verify HMAC + Re-sign'].json.transaction_id }}/ebs-callback",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-imis-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"billing_ref\":\"{{ $json.body.billing_ref ?? null }}\",\"ebs_sync_status\":\"synced\",\"ebs_sync_attempts\":4}"
+      },
+      "id": "ebs-callback-synced-4",
+      "name": "ebs-callback: synced (attempt 4)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [4000, 820]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/transactions/{{ $node['Verify HMAC + Re-sign'].json.transaction_id }}/ebs-callback",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-imis-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"ebs_sync_status\":\"failed\",\"ebs_sync_attempts\":4,\"error_msg\":\"EBS2000 unreachable after 3 retries (10/30/90s backoff). Last HTTP status: {{ $node['POST EBS2000 retry 3'].json.statusCode }}\"}"
+      },
+      "id": "ebs-callback-failed-final",
+      "name": "ebs-callback: failed (all retries exhausted)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [4000, 1020]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMIS_APP_URL }}/api/integration-log",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-imis-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"source_system\":\"EBS2000\",\"operation\":\"IMIS-EBS-001\",\"status\":\"failure\",\"error_msg\":\"All 3 retries exhausted (10/30/90s backoff). Transaction set to failed. Admin retry available in IMIS.\",\"payload\":{\"transaction_id\":\"{{ $node['Verify HMAC + Re-sign'].json.transaction_id }}\"},\"retry_count\":4}"
+      },
+      "id": "log-failure-final",
+      "name": "Log: failure (all retries exhausted)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [4250, 1020]
+    }
+  ],
+  "connections": {
+    "Webhook: IMIS stock-issue": {
+      "main": [
+        [
+          { "node": "Respond: 200 received",    "type": "main", "index": 0 },
+          { "node": "Verify HMAC + Re-sign",    "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Verify HMAC + Re-sign": {
+      "main": [
+        [{ "node": "HMAC valid?", "type": "main", "index": 0 }]
+      ]
+    },
+    "HMAC valid?": {
+      "main": [
+        [{ "node": "POST EBS2000 /api/billing",   "type": "main", "index": 0 }],
+        [{ "node": "Log: security_violation",     "type": "main", "index": 0 }]
+      ]
+    },
+    "POST EBS2000 /api/billing": {
+      "main": [
+        [{ "node": "Billing 2xx?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Billing 2xx?": {
+      "main": [
+        [{ "node": "ebs-callback: synced (attempt 1)",  "type": "main", "index": 0 }],
+        [{ "node": "Billing 4xx?",                      "type": "main", "index": 0 }]
+      ]
+    },
+    "ebs-callback: synced (attempt 1)": {
+      "main": [
+        [{ "node": "Log: success", "type": "main", "index": 0 }]
+      ]
+    },
+    "Billing 4xx?": {
+      "main": [
+        [{ "node": "ebs-callback: failed 4xx (attempt 1)", "type": "main", "index": 0 }],
+        [{ "node": "Wait 10s",                             "type": "main", "index": 0 }]
+      ]
+    },
+    "ebs-callback: failed 4xx (attempt 1)": {
+      "main": [
+        [{ "node": "Log: failure (4xx, no retry)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait 10s": {
+      "main": [
+        [{ "node": "POST EBS2000 retry 1", "type": "main", "index": 0 }]
+      ]
+    },
+    "POST EBS2000 retry 1": {
+      "main": [
+        [{ "node": "Retry1 2xx?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Retry1 2xx?": {
+      "main": [
+        [{ "node": "ebs-callback: synced (attempt 2)", "type": "main", "index": 0 }],
+        [{ "node": "Wait 30s",                         "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait 30s": {
+      "main": [
+        [{ "node": "POST EBS2000 retry 2", "type": "main", "index": 0 }]
+      ]
+    },
+    "POST EBS2000 retry 2": {
+      "main": [
+        [{ "node": "Retry2 2xx?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Retry2 2xx?": {
+      "main": [
+        [{ "node": "ebs-callback: synced (attempt 3)", "type": "main", "index": 0 }],
+        [{ "node": "Wait 90s",                         "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait 90s": {
+      "main": [
+        [{ "node": "POST EBS2000 retry 3", "type": "main", "index": 0 }]
+      ]
+    },
+    "POST EBS2000 retry 3": {
+      "main": [
+        [{ "node": "Retry3 2xx?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Retry3 2xx?": {
+      "main": [
+        [{ "node": "ebs-callback: synced (attempt 4)",          "type": "main", "index": 0 }],
+        [{ "node": "ebs-callback: failed (all retries exhausted)", "type": "main", "index": 0 }]
+      ]
+    },
+    "ebs-callback: failed (all retries exhausted)": {
+      "main": [
+        [{ "node": "Log: failure (all retries exhausted)", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": ["IMIS", "EBS2000", "billing", "webhook", "HMAC"],
+  "notes": "IMIS-EBS-001: Receives HMAC-signed webhook from IMIS on stock-issue movements. Immediately responds 200, then verifies HMAC. If valid, POSTs to EBS2000 /api/billing with re-signed body. Retries 5xx errors with 10/30/90s backoff (3 attempts). Calls back to /api/transactions/{id}/ebs-callback with synced or failed status. Permanent 4xx failures skip retries. Environment variables required: IMIS_APP_URL, N8N_WEBHOOK_SECRET, EBS2000_API_URL, EBS2000_API_KEY."
+}
