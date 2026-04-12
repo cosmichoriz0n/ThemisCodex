@@ -1,6 +1,9 @@
 import "server-only";
 import { cookies } from "next/headers";
 import Link from "next/link";
+import StockByCategoryChart from "@/components/dashboard/StockByCategoryChart";
+import AlertsDonutChart from "@/components/dashboard/AlertsDonutChart";
+import MovementTimelineChart from "@/components/dashboard/MovementTimelineChart";
 
 export const metadata = { title: "Dashboard — IMIS" };
 
@@ -255,6 +258,30 @@ export default async function DashboardPage() {
             );
           })}
         </div>
+      </div>
+
+      {/* ── Executive charts ───────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        {/* Stock by category — wide */}
+        <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 p-4">
+          <h2 className="text-sm font-medium text-gray-700 mb-3">Stock by Category (qty on hand)</h2>
+          <StockByCategoryChart data={data?.stockByCategory ?? []} />
+        </div>
+
+        {/* Alerts donut */}
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <h2 className="text-sm font-medium text-gray-700 mb-3">Open Alerts</h2>
+          <AlertsDonutChart
+            data={data?.alertCounts ?? []}
+            totalAlerts={data?.totalOpenAlerts ?? 0}
+          />
+        </div>
+      </div>
+
+      {/* ── Movement timeline (last 7 days) ─────────────────────────────── */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4">
+        <h2 className="text-sm font-medium text-gray-700 mb-2">Movement Activity — Last 7 Days</h2>
+        <MovementTimelineChart movements={data?.recentMovements ?? []} />
       </div>
 
       {/* ── Recent movements ────────────────────────────────────────────── */}
