@@ -20,5 +20,7 @@ export const integrationLog = pgTable(
     index("integration_log_system_idx").on(table.sourceSystem),
     index("integration_log_status_idx").on(table.status),
     index("integration_log_created_idx").on(table.createdAt),
+    // Sprint 10: compound for source system log queries (newest first)
+    index("integration_log_source_created_at_idx").on(table.sourceSystem, table.createdAt),
   ]
 );

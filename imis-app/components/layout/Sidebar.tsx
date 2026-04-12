@@ -24,6 +24,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/pms", label: "PMS Schedules", roles: ["inventory_staff", "inventory_manager", "system_admin"] },
   { href: "/alerts", label: "Alerts", roles: ["inventory_staff", "inventory_manager", "finance_officer", "system_admin", "auditor"] },
   { href: "/reports", label: "Reports", roles: ["inventory_manager", "finance_officer", "system_admin", "auditor"] },
+  { href: "/import", label: "Bulk Import", roles: ["inventory_manager", "system_admin"] },
   { href: "/integrations", label: "Integrations", roles: ["system_admin", "auditor"] },
 ];
 

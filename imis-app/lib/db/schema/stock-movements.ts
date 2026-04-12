@@ -25,5 +25,9 @@ export const stockMovements = pgTable(
   (table) => [
     index("stock_movements_item_idx").on(table.itemId),
     index("stock_movements_moved_at_idx").on(table.movedAt),
+    // Sprint 10: compound for item history queries (item + time, newest first)
+    index("stock_movements_item_moved_at_idx").on(table.itemId, table.movedAt),
+    // Sprint 10: member issuance history
+    index("stock_movements_member_id_idx").on(table.memberId),
   ]
 );

@@ -1,0 +1,28 @@
+item_name,category_code,sku,description,location,qty_on_hand,reorder_level,conductor_type,gauge,length_m,voltage_rating,lot_no,tool_type,condition,assigned_to,calibration_due,room_location,acquisition_cost,brand,pack_size,unit,plate_no,or_no,make,model,year,mileage,insurance_expiry,wire_type,insulation_rating,serial_no,calibration_cert,calibration_expiry,nea_asset_code,feeder,depreciation_rate,installation_date,expiry_date,batch_no,storage_temp,doh_class,chassis_no,engine_no,lto_expiry,emission_due,ntc_license_no,ntc_expiry,material_type,supplier,work_order_ref,mac_address,os_version,license_key,license_expiry,assigned_user
+# HOW TO USE THIS TEMPLATE
+# 1. Fill in item_name and category_code for every row (required).
+# 2. Fill only the columns that apply to your category — leave others blank.
+# 3. Delete all comment lines (rows starting with #) before uploading.
+#
+# CATEGORY CODES: LM TE FF OS MP HW SE UPIS MS TR CE BM IT
+#
+# REQUIRED fields per category:
+# LM  : conductor_type, gauge, length_m, voltage_rating
+# TE  : tool_type, condition (new/good/fair/poor)
+# FF  : room_location, acquisition_cost, condition (new/good/fair/poor)
+# OS  : brand, pack_size, unit, reorder_level
+# MP  : plate_no, or_no, make, model, year, mileage
+# HW  : wire_type, gauge, length_m, insulation_rating
+# SE  : serial_no
+# UPIS: nea_asset_code, feeder, depreciation_rate, installation_date
+# MS  : lot_no, expiry_date, batch_no
+# TR  : plate_no, or_no, chassis_no, engine_no
+# CE  : serial_no
+# BM  : material_type, unit
+# IT  : serial_no
+#
+# EXAMPLE ROWS (delete these before uploading):
+# 3/0 ACSR Conductor,LM,LM-2024-001,ACSR bare conductor,Main Warehouse,500,100,ACSR,3/0,300,13.8kV,LOT-001
+# Lineman's Pliers,TE,,Standard lineman pliers,Field Store,10,5,Pliers,good,Juan Dela Cruz,2026-12-31
+# Photocopier Toshiba,FF,,Office photocopier,Admin Office,1,0,Admin Office,45000,good
+# Bond Paper A4,OS,,80gsm bond paper,Supply Room,200,50,Navigator,500 sheets,ream,50
